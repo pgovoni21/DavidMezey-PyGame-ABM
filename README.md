@@ -26,15 +26,17 @@ We advocate further study of navigation from the bottom-up without assuming onli
 which may better explain behavior under energetic or attentional constraints.
 
 <p float="left">
-  <img src="./site_media/sim_IS_respawn.gif" width="250" />
-  <img src="./site_media/sim_BD_respawn.gif" width="250" />
-  <img src="./site_media/sim_DP_respawn.gif" width="250" />
+  <img src="./site_media/sim_IS.gif" width="250" />
+  <img src="./site_media/sim_BD.gif" width="250" />
+  <img src="./site_media/sim_DP.gif" width="250" />
 </p>
 <p float="left">
   <img src="./site_media/trajs_IS.png" width="250" />
   <img src="./site_media/trajs_BD.png" width="250" />
   <img src="./site_media/trajs_DP.png" width="250" />
 </p>
+
+**Behavioral Convergence:**
 
 <img src="./site_media/MWM.png" width="800"/>
 <img src="./site_media/sperm.png" width="800"/>
