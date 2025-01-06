@@ -14,7 +14,7 @@ class EvolAlgo():
     def __init__(self, arch, activ, RNN_type,
                  generations, population_size, episodes, 
                  init_sigma, step_sigma, step_mu, momentum,
-                 EA_save_name, start_seed, est_method):
+                 EA_save_name, start_seed, est_method, sim_type):
         
         # init_time = time.time()
         self.overall_time = time.time()
@@ -37,6 +37,7 @@ class EvolAlgo():
         self.init_sigma = init_sigma
         self.start_seed = start_seed
         self.est_method = est_method
+        self.sim_type = sim_type
 
         # Initialize ES optimizer
         self.es = PGPE(
@@ -114,16 +115,22 @@ class EvolAlgo():
             #### ---- Find fitness averages across episodes ---- ####
 
             # pull sim data, skipping to start of each episode series/chunk
-            for p, NN_index in enumerate(range(0, len(results_list), self.episodes)):
-                for e, (time_taken, dist_from_patch) in enumerate(results_list[NN_index : NN_index + self.episodes]):
+            if self.sim_type == 'walls':
+                for p, NN_index in enumerate(range(0, len(results_list), self.episodes)):
+                    for e, (time_taken, dist_from_patch) in enumerate(results_list[NN_index : NN_index + self.episodes]):
 
-                    if dist_from_patch == 0:
-                        self.fitness_evol[i,p,e] = int(time_taken)
-                    else:
-                        self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch)
-                        # self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch/2)
-                        # self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch + 200)
-                        # self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch/2 + 200)
+                        if dist_from_patch == 0:
+                            self.fitness_evol[i,p,e] = int(time_taken)
+                        else:
+                            self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch)
+                            # self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch/2)
+                            # self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch + 200)
+                            # self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch/2 + 200)
+
+            elif self.sim_type == 'nowalls':
+                for p, NN_index in enumerate(range(0, len(results_list), self.episodes)):
+                    for e, (time_taken, total_res_collected) in enumerate(results_list[NN_index : NN_index + self.episodes]):
+                        self.fitness_evol[i,p,e] = int(total_res_collected)
 
             # estimate episodal fitnesses by mean or median
             if self.est_method == 'mean':
@@ -133,7 +140,10 @@ class EvolAlgo():
             # print(f'Fitnesses: {fitness_rank}')
 
             # Pass parameters + resulting fitness list to *maximizing* optimizer class
-            fitness_rank = [-f for f in fitness_rank] # flips sign (only applicable if min : top)
+            if self.sim_type == 'walls':
+                fitness_rank = [-f for f in fitness_rank] # flips sign (only applicable if min : top)
+            elif self.sim_type == 'nowalls':
+                pass # no sign flip needed
             self.es.tell(fitness_rank)
 
             # update/pickle generational fitness data in parent directory

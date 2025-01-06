@@ -13,7 +13,7 @@ def start(model_tuple=None, pv=None, load_dir=None, seed=None, env_path=None): #
 
     if pv is None: # if called from abm-start
         envconf = de.dotenv_values(Path(__file__).parent.parent / '.env')
-        NN = Model()
+        NN, arch = reconstruct_NN(envconf)
 
         # envconf['WITH_VISUALIZATION'] = 0
         envconf['WITH_VISUALIZATION'] = 1
@@ -36,13 +36,16 @@ def start(model_tuple=None, pv=None, load_dir=None, seed=None, env_path=None): #
             # override original EA-written env dict
             # envconf['LOG_ZARR_FILE'] = 0
 
-            # envconf['WITH_VISUALIZATION'] = 1
-            # envconf['INIT_FRAMERATE'] = 100
+            envconf['WITH_VISUALIZATION'] = 1
+            envconf['INIT_FRAMERATE'] = 20
 
             # envconf['N'] = 4
-            # envconf['T'] = 10000
+            # envconf['T'] = 2000
             # envconf['RADIUS_RESOURCE'] = 100
             # envconf['MAXIMUM_VELOCITY'] = 5
+
+            # envconf['SIM_TYPE'] = 'walls'
+            # envconf['BOUNDARY_SCALE'] = '0'
 
             NN, arch = reconstruct_NN(envconf, pv)
 
@@ -90,11 +93,54 @@ def start(model_tuple=None, pv=None, load_dir=None, seed=None, env_path=None): #
                             boundary_scale         =int(envconf["BOUNDARY_SCALE"]),
                             sim_type               =str(envconf["SIM_TYPE"]),
                             )
-            t, d, elapsed_time = sim.start()
+            t, dist, elapsed_time = sim.start()
 
             # print(f'Finished {load_dir}, runtime: {elapsed_time} sec, fitness: {t, d}')
 
-        return t, d
+        return t, dist
+
+
+    elif envconf['SIM_TYPE'] == 'nowalls':
+        from abm.simulation.sims_target_nowalls import Simulation
+
+        with ExitStack():
+            sim = Simulation(env_size              =tuple(eval(envconf["ENV_SIZE"])),
+                            window_pad             =int(envconf["WINDOW_PAD"]),
+                            N                      =int(envconf["N"]),
+                            T                      =int(envconf["T"]),
+                            with_visualization     =bool(int(envconf["WITH_VISUALIZATION"])),
+                            framerate              =int(envconf["INIT_FRAMERATE"]),
+                            print_enabled          =bool(int(envconf["PRINT_ENABLED"])),
+                            plot_trajectory        =bool(int(envconf["PLOT_TRAJECTORY"])),
+                            log_zarr_file          =bool(int(envconf["LOG_ZARR_FILE"])),
+                            save_ext               =None,
+                            agent_radius           =int(envconf["RADIUS_AGENT"]),
+                            max_vel                =int(envconf["MAXIMUM_VELOCITY"]),
+                            vis_field_res          =int(envconf["VISUAL_FIELD_RESOLUTION"]),
+                            vision_range           =int(envconf["VISION_RANGE"]),
+                            agent_fov              =float(envconf['AGENT_FOV']),
+                            show_vision_range      =bool(int(envconf["SHOW_VISION_RANGE"])),
+                            agent_consumption      =int(envconf["AGENT_CONSUMPTION"]),
+                            N_res                  =int(envconf["N_RESOURCES"]),
+                            patch_radius           =float(envconf["RADIUS_RESOURCE"]),
+                            res_pos                =tuple(eval(envconf["RESOURCE_POS"])),
+                            res_units              =tuple(eval(envconf["RESOURCE_UNITS"])),
+                            res_quality            =tuple(eval(envconf["RESOURCE_QUALITY"])),
+                            regenerate_patches     =bool(int(envconf["REGENERATE_PATCHES"])),
+                            NN                     =NN,
+                            other_input            =int(envconf["RNN_OTHER_INPUT_SIZE"]),
+                            vis_transform          =str(envconf["VIS_TRANSFORM"]),
+                            percep_angle_noise_std =float(envconf["PERCEP_ANGLE_NOISE_STD"]),
+                            percep_dist_noise_std  =float(envconf["PERCEP_DIST_NOISE_STD"]),
+                            action_noise_std       =float(envconf["ACTION_NOISE_STD"]),
+                            boundary_scale         =int(envconf["BOUNDARY_SCALE"]),
+                            sim_type               =str(envconf["SIM_TYPE"]),
+                            )
+            t, res, elapsed_time = sim.start()
+
+            # print(f'Finished {load_dir}, runtime: {elapsed_time} sec, fitness: {t, d}')
+
+        return t, res
 
 
     elif envconf['SIM_TYPE'] == 'LM':
@@ -135,22 +181,22 @@ def start(model_tuple=None, pv=None, load_dir=None, seed=None, env_path=None): #
                             LM_angle_noise_std     =float(envconf["LM_ANGLE_NOISE_STD"]),
                             LM_radius_noise_std    =float(envconf["LM_RADIUS_NOISE_STD"]),
                             )
-            t, d, elapsed_time = sim.start()
+            t, dist, elapsed_time = sim.start()
 
             # print(f'Finished {load_dir}, runtime: {elapsed_time} sec, fitness: {t, d}')
 
-        return t, d
+        return t, dist
 
 
-def reconstruct_NN(envconf,pv):
+def reconstruct_NN(envconf,pv=None):
     """mirrors start_EA arch packaging"""
     
     # gather NN variables
     N                    = int(envconf["N"])
 
     if N == 1:  num_class_elements = 4 # single-agent --> perception of 4 walls
+    elif envconf["SIM_TYPE"] == 'nowalls': num_class_elements = 2 # multi-agent --> 2 agent modes
     else:       num_class_elements = 6 # multi-agent --> perception of 4 walls + 2 agent modes
-    # num_class_elements = 4
     
     # assemble NN architecture
     vis_field_res        = int(envconf["VISUAL_FIELD_RESOLUTION"])
@@ -202,46 +248,31 @@ if __name__ == '__main__':
 
     # exp_name = 'sc_CNN12_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep18'
     # gen_ext = 'gen790'
+
     # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep1'
     # gen_ext = 'gen872'
     # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep3'
+    # gen_ext = 'gen956'
+    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep4'
     # gen_ext = 'gen941'
+
+    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep9'
+    # gen_ext = 'gen919'
     # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep15'
     # gen_ext = 'gen937'
+    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_seed10k_rep4'
+    # gen_ext = 'gen859'
+
     # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_rep10'
     # gen_ext = 'gen963'
-    # exp_name = 'sc_CNN14_GRUpara16_p50e20_vis8_PGPE_ss20_mom8_rep9'
-    # gen_ext = 'gen976'
 
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_bound1000_rep7'
-    # gen_ext = 'gen999'
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_bound1000_rep9'
-    # gen_ext = 'gen963'
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_bound1000_rep18'
-    # gen_ext = 'gen988'
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_bound500_rep10'
-    # gen_ext = 'gen991'
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_bound1000_rep4'
-    # gen_ext = 'gen933'
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_bound1000_rep16'
-    # gen_ext = 'gen930'
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_bound1000_rep6'
-    # gen_ext = 'gen876'
-    # exp_name = 'sc_CNN27_FNN16_p50e20_vis32_PGPE_ss20_mom8_bound1000_rep1'
-    # gen_ext = 'gen956'
-    # exp_name = 'sc_CNN24_FNN2_p50e20_vis32_PGPE_ss20_mom8_bound1000_rep12'
-    # gen_ext = 'gen941'
-    # exp_name = 'sc_CNN1148_FNN2_p50e20_vis32_PGPE_ss20_mom8_bound1000_rep0'
-    # gen_ext = 'gen990'
+    # exp_name = 'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_rep7'
+    # gen_ext = 'gen837'
+    # exp_name = 'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_rep11'
+    # gen_ext = 'gen979'
 
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_2xpinball_rep1'
-    # gen_ext = 'gen940'
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis16_2xpinball_rep3'
-    # gen_ext = 'gen905'
-    # exp_name = 'sc_CNN14_FNN2_p50e20_vis8_maxWF_2xpinball_rep0'
-    # gen_ext = 'gen905'
-    exp_name = 'sc_CNN17_FNN16_p50e20_vis16_2xpinball_rep1'
-    gen_ext = 'gen973'
+    exp_name = 'nowall_N5_CNN14_FNN2_vis8_rep0'
+    gen_ext = 'gen568'
 
 
 
@@ -252,5 +283,5 @@ if __name__ == '__main__':
     with open(NN_pv_path,'rb') as f:
         pv = pickle.load(f)
 
-    start(pv=pv, env_path=env_path, seed=3)
+    start(pv=pv, env_path=env_path, seed=1)
     # start()

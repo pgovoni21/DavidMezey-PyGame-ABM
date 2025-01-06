@@ -101,3 +101,10 @@ def get_intersection(a1,a2, b1,b2):
 
 def near(a, b, rtol=1e-5, atol=1e-8):
     return abs(a - b) < (atol + rtol * abs(b))
+
+
+def distance_to_line(pt, start_pos, end_pos):
+    """ 
+    Returns distance from a point to a line segment
+    """
+    return np.abs(np.linalg.norm(np.cross(end_pos-start_pos, start_pos-pt)))/np.linalg.norm(end_pos-start_pos)

@@ -97,7 +97,7 @@ class Agent(pygame.sprite.Sprite):
             ('BL', BL),
             ('BR', BR)
         ]
-        self.extra_coll_block = 100 * np.pi / 180 # extra collision degrees where agent vel = 0 (since clip collision is slow 1 timestep)
+        self.extra_coll_block = 0 * np.pi / 180 # extra collision degrees where agent vel = 0 (since clip collision is slow 1 timestep)
 
         # Visualization / human interaction parameters
         self.radius = radius
@@ -356,7 +356,7 @@ class Agent(pygame.sprite.Sprite):
 
                 if mode == "exploit": 
                     self.vis_field[i] = "agent_exploit"
-                else: # mode == "exploit": 
+                else: # mode == "explore" or "collide": 
                     self.vis_field[i] = "agent_explore"
 
     # @timer
@@ -364,6 +364,8 @@ class Agent(pygame.sprite.Sprite):
         """
         Accumulates visual sensory functions
         """
+        # Carry last
+        self.last_vis_field = self.vis_field
         # Zero from previous step
         self.vis_field = [0] * self.vis_field_res
         if self.dist_field is not None:
@@ -472,15 +474,30 @@ class Agent(pygame.sprite.Sprite):
         """
         field_onehot = np.zeros((self.num_class_elements, len(field)))
 
-        for i,x in enumerate(field):
-            if x == 'wall_north': field_onehot[0,i] = 1
-            elif x == 'wall_south': field_onehot[1,i] = 1
-            elif x == 'wall_east': field_onehot[2,i] = 1
-            elif x == 'wall_west': field_onehot[3,i] = 1
-            elif x == 'obj': field_onehot[4,i] = 1
-            # elif x == 'agent_exploit': field_onehot[4,i] = 1
-            # else: # x == 'agent_explore
-            #     field_onehot[5,i] = 1
+        if self.num_class_elements == 4:
+            for i,x in enumerate(field):
+                if x == 'wall_north': field_onehot[0,i] = 1
+                elif x == 'wall_south': field_onehot[1,i] = 1
+                elif x == 'wall_east': field_onehot[2,i] = 1
+                elif x == 'wall_west': field_onehot[3,i] = 1
+                # else x == 'obj': field_onehot[4,i] = 1
+
+        elif self.num_class_elements == 2:
+            for i,x in enumerate(field):
+                if x == 'agent_explore': field_onehot[0,i] = 1
+                elif x == 'agent_exploit': field_onehot[1,i] = 1
+                # else nothing is perceived
+
+        elif self.num_class_elements == 6:
+            for i,x in enumerate(field):
+                if x == 'wall_north': field_onehot[0,i] = 1
+                elif x == 'wall_south': field_onehot[1,i] = 1
+                elif x == 'wall_east': field_onehot[2,i] = 1
+                elif x == 'wall_west': field_onehot[3,i] = 1
+                elif x == 'agent_explore': field_onehot[4,i] = 1
+                elif x == 'agent_exploit': field_onehot[5,i] = 1
+                else: print('error - nothing is perceived')
+
         return field_onehot
     
     def encode_labels(self, field):

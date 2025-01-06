@@ -47,7 +47,8 @@ def start_EA(): # "EA-start" in terminal
                   episodes                  =int(envconf["EA_EPISODES"]), 
                   EA_save_name              =str(envconf["EA_SAVE_NAME"]),
                   start_seed                =int(envconf["EA_START_SEED"]),
-                  est_method                =str(envconf["EA_EST_METHOD"])
+                  est_method                =str(envconf["EA_EST_METHOD"]),
+                  sim_type                  =str(envconf['SIM_TYPE']),
                   )
     EA.fit_parallel()
 
