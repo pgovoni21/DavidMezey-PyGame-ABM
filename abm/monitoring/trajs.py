@@ -2,6 +2,7 @@ from abm.start_sim import reconstruct_NN
 from abm.sprites.agent import Agent
 # from abm.sprites.agent_LM import Agent
 from abm.sprites.landmark import Landmark
+from abm.sprites import supcalc
 from abm.monitoring.plot_funcs import plot_map_iterative_traj, plot_map_iterative_traj_3d, beeswarm
 
 import dotenv as de
@@ -144,7 +145,7 @@ def build_action_matrix(exp_name, gen_ext, space_step, orient_step):
 
     
 def plot_action_vecfield(exp_name, gen_ext, space_step, orient_step, plot_type='', colored='count', ex_lines=False, dpi=50):
-    print(f'plotting action vector field - {exp_name} @ {dpi} dpi')
+    print(f'plotting action vector field - {exp_name} {plot_type}{colored} @ {dpi} dpi')
 
     data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
     env_path = fr'{data_dir}/{exp_name}/.env'
@@ -342,6 +343,15 @@ def plot_action_vecfield(exp_name, gen_ext, space_step, orient_step, plot_type='
         # Q = axes.streamplot(X,Y, U,-V, color='k', broken_streamlines=False) # streams
         # axes.set_title(f'Avg: {np.mean(M):.2f}, Median: {np.median(M):.2f}, Min: {np.min(M):.2f}, Max: {np.max(M):.2f}')
         axes.quiver(X,Y, U,V)
+    
+        M_len = np.hypot(U, V)
+        flat_argmin = M_len.argmin()
+        M_min_x = np.floor_divide(flat_argmin, M_len.shape[0])
+        M_min_y = np.remainder(flat_argmin, M_len.shape[0])
+        x_basin, y_basin = y_range[M_min_y], x_range[M_min_x]
+        # print(M.min() == M[M_min_x, M_min_y])
+        # axes.scatter(x_range[M_min_x], y_range[M_min_y], c='k', s=10)
+        axes.scatter(x_basin, y_basin, c='k', s=20)
 
     elif colored == 'len':
         M = np.hypot(U, V)
@@ -355,10 +365,19 @@ def plot_action_vecfield(exp_name, gen_ext, space_step, orient_step, plot_type='
     
         levs = np.linspace(0, .5, 11)
         im = axes.contourf(X,Y,M, levs, cmap='plasma', alpha=.6, extend='max')
+        # im = axes.contourf(X,Y,M, cmap='plasma', alpha=.6, extend='max', norm='log')
         plt.colorbar(im, label='Mean Action Vector Magnitude',
                      fraction=0.056, pad=0.04,)
         # axes.set_title(f'Avg: {np.mean(M):.2f}, Median: {np.median(M):.2f}, Min: {np.min(M):.2f}, Max: {np.max(M):.2f}')
         axes.quiver(X,Y, U,V)
+
+        flat_argmin = M.argmin()
+        M_min_x = np.floor_divide(flat_argmin, M.shape[0])
+        M_min_y = np.remainder(flat_argmin, M.shape[0])
+        x_basin, y_basin = y_range[M_min_y], x_range[M_min_x]
+        # print(M.min() == M[M_min_x, M_min_y])
+        # axes.scatter(x_range[M_min_x], y_range[M_min_y], c='k', s=10)
+        axes.scatter(x_basin, y_basin, c='k', s=20)
 
     elif plot_type == '_peaks_fwd' or plot_type == '_peaks_turn':
         # print(f'max peaks: {np.max(M)}')
@@ -477,15 +496,20 @@ def plot_action_vecfield(exp_name, gen_ext, space_step, orient_step, plot_type='
     x,y = tuple(eval(envconf["RESOURCE_POS"]))
     axes.add_patch( plt.Circle((x, y), radius, edgecolor='k', fill=False, zorder=1) )
 
+    if colored == 'ori' or colored == 'len':
+        basin = np.array([x_basin, y_basin])
+        patch = np.array([x, y])
+        basin_patch_dist = np.linalg.norm(basin - patch)
+
     if colored == 'count':
         plt.savefig(fr'{save_name}{plot_type}.png', dpi=dpi)
     else:
         plt.savefig(fr'{save_name}{plot_type}_C{colored}.png', dpi=dpi)
     # plt.savefig(fr'{save_name}{plot_type}_C{colored}_colorbar.png', dpi=dpi*4)
-    plt.show()
-    # plt.close()
+    # plt.show()
+    plt.close()
 
-    return np.mean(M), np.median(M), np.min(M), np.max(M)
+    return np.mean(M), np.median(M), np.min(M), np.max(M), basin_patch_dist
 
 
 # def plot_action_volume(exp_name, gen_ext, space_step, orient_step, transform='high'):
@@ -717,6 +741,8 @@ def agent_traj_from_xyo(envconf, NN, boundary_endpts, x, y, orient, timesteps, e
 
         if other_input == 2:
             agent.action, agent.hidden = agent.model.forward(vis_input, np.array([0, agent.acceleration / 2]), agent.hidden)
+        elif other_input == 1:
+            agent.action, agent.hidden = agent.model.forward(vis_input, np.array([agent.action]), agent.hidden)
         else:
             agent.action, agent.hidden = agent.model.forward(vis_input, np.array([0]), agent.hidden)
 
@@ -889,6 +915,8 @@ def plot_agent_trajs(exp_name, gen_ext, space_step, orient_step, timesteps, rank
         sim_type = str(envconf["SIM_TYPE"])
         if sim_type == 'walls':
             if not act_arr:
+                # print('printing in action_maps')
+                # save_name = fr'{data_dir}/action_maps/{exp_name}_{gen_ext}_c{space_step}_o{int(np.pi/orient_step)}_t{timesteps}_{rank}_e{int(eye)}'
                 plot_map_iterative_traj(traj_plot_data, x_max=width, y_max=height, save_name=save_name, ellipses=ellipses, ex_lines=ex_lines, extra=extra, dpi=dpi)
             else:
                 save_name = fr'{data_dir}/action_maps/{exp_name}_{gen_ext}_c{space_step}_o32_action' # hardset at 32
@@ -1005,7 +1033,10 @@ def plot_traj_vecfield(exp_name, gen_ext, space_step, orient_step, timesteps, pl
         H = np.divide(H, H_count, out=np.zeros_like(H), where=H_count!=0)
  
         X,Y = np.meshgrid(x_bins, y_bins)
-        norm = mpl.colors.Normalize(vmin=0, vmax=1)
+        min = H.min()
+        max = H.max()
+        norm = mpl.colors.Normalize(vmin=min, vmax=(max-min)*.10+min)
+        # norm = mpl.colors.Normalize(vmin=H.min(), vmax=H.max())
         axes.pcolormesh(X, Y, H.T, cmap='plasma', norm=norm)
 
     elif plot_type == '_avgori':
@@ -1015,10 +1046,19 @@ def plot_traj_vecfield(exp_name, gen_ext, space_step, orient_step, timesteps, pl
         H_y,_,_ = np.histogram2d(x, y, bins=[x_bins, y_bins], weights=np.sin(ori))
         H_y = np.divide(H_y, H_count, out=np.zeros_like(H_y), where=H_count!=0)
         H = np.arctan2(H_y, H_x)
- 
-        X,Y = np.meshgrid(x_bins, y_bins)
-        norm = mpl.colors.Normalize(vmin=-np.pi, vmax=np.pi)
-        axes.pcolormesh(X, Y, H.T, cmap='hsv', norm=norm)
+        H = (H + 2*np.pi)%(2*np.pi)
+
+        norm = mpl.colors.Normalize(vmin=0, vmax=2*np.pi)
+        im = axes.imshow(H.T, cmap='hsv', norm=norm, extent=(x_min, x_max, y_min, y_max), origin='lower')
+
+        plt.colorbar(im, label='Orientation',
+                    fraction=0.046, pad=0.04,
+                    ticks=np.arange(0, 2*np.pi+0.01, np.pi/2),
+                    format=mpl.ticker.FixedFormatter(['$0$', r'$\pi/2$', r'$\pi$', r'$3\pi/2$', r'$2\pi$']),)
+
+        # mask if action < 10%
+        H_mask = np.ma.array(H, mask=np.where(H_count < 1, False, True))
+        im_mask = axes.imshow(H_mask.T, cmap='binary', extent=(x_min, x_max, y_min, y_max), origin='lower')
 
     elif plot_type == '_avglen':
         H_count,_,_ = np.histogram2d(x, y, bins=[x_bins, y_bins])
@@ -1073,6 +1113,7 @@ def plot_traj_vecfield(exp_name, gen_ext, space_step, orient_step, timesteps, pl
     x,y = tuple(eval(envconf["RESOURCE_POS"]))
     axes.add_patch( plt.Circle((x, height-y), radius, edgecolor='k', fill=False, zorder=1) )
 
+    save_name = fr'{data_dir}/action_maps/{exp_name}_{gen_ext}_c{space_step}_o{int(np.pi/orient_step)}_t{timesteps}_traj'
     plt.savefig(fr'{save_name}_hist{plot_type}.png', dpi=dpi)
     plt.close()
 
@@ -1547,6 +1588,113 @@ def plot_agent_orient_corr(exp_name, gen_ext, space_step, orient_step, timesteps
     print(f'dirent init: {dirent_init:.2f} // dirent patch: {dirent_patch:.2f}')
 
     return corr_peaks, decorr_time, -histo_avg_init, -histo_avg_patch, histo_peaks_init, histo_peaks_patch, dirent_init, dirent_patch
+
+
+def log_ray_boundary_collision(agent, action, last_moves, boundary_endpts, phi_angle_diff):
+    coll_output = 0
+    if action not in last_moves:
+        # compare last two observations
+        vis_diff = [x != y for x,y in zip(agent.vis_field, agent.last_vis_field)]
+        vis_diff_idx = np.where(vis_diff)[0]
+        intersect = False
+
+        if len(vis_diff_idx) > 0:
+            corner_intersecting_pts = []
+            for i,phi in enumerate(agent.phis):
+
+                for pt_idx, pt in enumerate(boundary_endpts):
+                    vec_between = pt - agent.pt_eye
+                    angle_bw = supcalc.angle_bw_vis(agent.vec_self_dir, vec_between, agent.radius, np.linalg.norm(vec_between))
+
+                    # single ray collision --> find nearest corner
+                    if len(vis_diff_idx) == 1 and i == vis_diff_idx[0]:
+                        if np.abs(angle_bw-phi) / phi_angle_diff < 1:
+                            intersect = True
+
+                            if len(set(agent.vis_field)) == 2:
+                                # coll_output = (pt, agent.pt_eye, 2)
+                                coll_output = 200 + pt_idx
+                            elif len(set(agent.vis_field)) == 3:
+                                # coll_output = (pt, agent.pt_eye, 3)
+                                coll_output = 300 + pt_idx
+
+                    # check for ellipse - looser query (single/multi rays), stricter criteria (10% proximity)
+                    if np.abs(angle_bw-phi) / phi_angle_diff < 0.1:
+                        # corner_intersecting_pts.append(pt)
+                        corner_intersecting_pts.append(pt_idx)
+
+            # for 2 corners intersecting --> ellipse
+            if len(corner_intersecting_pts) == 2:
+                intersect = True
+                # coll_output = (corner_intersecting_pts, agent.pt_eye, 0)
+                coll_output = corner_intersecting_pts[0] + corner_intersecting_pts[1]/10
+
+            # no single ray coll + no ellipse
+            elif intersect == False:
+                # coll_output = ([], agent.pt_eye, 0)
+                coll_output = 100
+    
+    # fading memory of last moves
+    last_moves.append(action)
+    if len(last_moves) > 2:
+        last_moves.pop(0)
+    
+    return last_moves, coll_output
+
+
+
+def plot_agent_ray_boundary_collision_corr(exp_name, gen_ext, space_step, orient_step, timesteps, rank='cen', eye=True, dpi=None):
+    print(f'plotting corr - {exp_name} @ {dpi} dpi')
+
+    data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
+    save_name = fr'{data_dir}/traj_matrices/{exp_name}_{gen_ext}_c{space_step}_o{int(np.pi/orient_step)}_t{timesteps}_{rank}_e{int(eye)}'
+    if not os.path.exists(save_name+'.bin'):
+        print(f'no data found for {save_name}')
+        return 0,0,0,0
+    with open(save_name+'.bin', 'rb') as f:
+        ag_data = pickle.load(f)
+    save_name = fr'{data_dir}/corrs/{exp_name}_{gen_ext}_c{space_step}_o{int(np.pi/orient_step)}_t{timesteps}_{rank}_e{int(eye)}'
+
+    num_runs,t_len,_ = ag_data.shape
+    t = np.linspace(0,t_len,t_len)
+    # print(f'ag_data shape: {num_runs, len(t)}')
+
+    # corr to init
+    delay = 25
+    t = t[:-delay]
+    t_len -= delay
+    orient = ag_data[:,delay:,2]
+    orient_0 = orient[:,0]
+    orient_0 = np.tile(orient_0,(t_len,1)).transpose()
+    corr_init_angle_diff = orient - orient_0
+    corr_init_angle_diff_scaled = (corr_init_angle_diff + np.pi) % (2*np.pi) - np.pi # [-pi/2, pi/2]
+    corr_init = np.cos(corr_init_angle_diff)
+    # print(f'corr_init shape: {corr_init.shape}')
+
+    # patch position
+    env_path = fr'{data_dir}/{exp_name}/.env'
+    envconf = de.dotenv_values(env_path)
+    pt_target = np.array(eval(envconf["RESOURCE_POS"]))
+    pt_target[1] = 1000 - pt_target[1]
+
+    # distance to patch
+    x = ag_data[:,delay:,0]
+    y = ag_data[:,delay:,1]
+    pt_self = np.array([x,y])
+    disp = pt_self.transpose() - pt_target
+    dist = np.linalg.norm(disp, axis=2)
+
+    # corr to patch
+    angle_to_target = np.arctan2(disp[:,:,1], disp[:,:,0]) + np.pi # shift by pi for [0-2pi]
+    # print('max/min angle_to_target: ', np.max(angle_to_target), np.min(angle_to_target))
+    corr_patch_angle_diff = angle_to_target.transpose() - orient
+    corr_patch_angle_diff_scaled = (corr_patch_angle_diff + np.pi) % (2*np.pi) - np.pi # [-pi/2, pi/2]
+    corr_patch = np.cos(corr_patch_angle_diff)
+    # print(f'corr_patch shape: {corr_patch.shape}')
+
+    # action
+    action = np.abs(ag_data[:,delay:,3])/(np.pi/2) # [0,1]
+
 
 
 def plot_agent_valnoise_dists(run_name, noise_types, val='cen', dpi=None):
@@ -2355,11 +2503,11 @@ def plot_IDM_view(space_step, orient_step, view_onehot, vis_field_res=32, plot_t
 
 
     fig, axes = plt.subplots() 
-    axes.set_xlim(0, x_max)
-    axes.set_ylim(0, y_max)
-    h,w = 8,8
-    l,r,t,b = fig.subplotpars.left, fig.subplotpars.right, fig.subplotpars.top, fig.subplotpars.bottom
-    fig.set_size_inches( float(w)/(r-l) , float(h)/(t-b) )
+    # axes.set_xlim(0, x_max)
+    # axes.set_ylim(0, y_max)
+    # h,w = 8,8
+    # l,r,t,b = fig.subplotpars.left, fig.subplotpars.right, fig.subplotpars.top, fig.subplotpars.bottom
+    # fig.set_size_inches( float(w)/(r-l) , float(h)/(t-b) )
 
     save_name = fr'{data_dir}/IDM/IDM_transrot_c{space_step}_o{int(np.pi/orient_step)}_vsres{vis_field_res}_view{view_onehot}'
     with open(save_name+'.bin', 'rb') as f:
@@ -2405,11 +2553,27 @@ def plot_IDM_view(space_step, orient_step, view_onehot, vis_field_res=32, plot_t
         avgori = np.arctan2(np.mean(np.sin(ori)), np.mean(np.cos(ori)))
         axes.quiver(np.mean(x), np.mean(y), np.cos(avgori), np.sin(avgori))
 
+    elif plot_type == '_transrot_ori_perf_dist':
+        print(f'plotting IDM (transrot - ori - perfect matches only) @ {dpi} dpi')
+
+        nx,ny = count_mat.shape
+        x,y,ori = zip(*[ (x_range[i], height-y_range[j], ori_mat[i,j]) for i in range(nx) for j in range(ny) if count_mat[i,j] == 0 ])
+
+        ori = np.array(ori)
+        ori_shift = (ori + 2*np.pi)%(2*np.pi)
+        ori_deg = ori_shift*180/np.pi
+
+        axes.hist(ori_deg, bins=np.arange(0,361,5), density=True)
+        axes.set_xticks(np.linspace(0,361,5))
+        axes.set_xticklabels(['$0$', r'$\pi/2$', r'$\pi$', r'$3\pi/2$', r'$2\pi$'])
+        axes.set_xlabel('Orientation')
+        axes.set_ylabel('Probability Density')
+
     else:
         print('invalid plot type')
         return
 
-    axes.add_patch( plt.Circle((patch_x, height-patch_y), patch_radius, edgecolor='k', fill=False, zorder=1) )
+    # axes.add_patch( plt.Circle((patch_x, height-patch_y), patch_radius, edgecolor='k', fill=False, zorder=1) )
     plt.savefig(fr'{save_name}{plot_type}.png', dpi=dpi)
     plt.close()
 
@@ -2569,6 +2733,103 @@ def plot_IDM_avgperfviews(space_step, orient_step, vis_field_res=32, plot_type='
     # plt.show()
 
 
+def build_IDM_unique_views(exp_name, gen_ext, space_step, orient_step, vis_field_res=32):
+
+    # pull pv + envconf from save folders
+    data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
+    NN_pv_path = fr'{data_dir}/{exp_name}/{gen_ext}_NNcen_pickle.bin'
+    with open(NN_pv_path,'rb') as f:
+        pv = pickle.load(f)
+    env_path = fr'{data_dir}/{exp_name}/.env'
+    envconf = de.dotenv_values(env_path)
+    NN, arch = reconstruct_NN(envconf, pv)
+
+    # construct boundary endpts
+    width, height = tuple(eval(envconf["ENV_SIZE"]))
+    x_min, x_max = 0, width
+    y_min, y_max = 0, height
+    boundary_endpts = [
+            np.array([ x_min, y_min ]),
+            np.array([ x_max, y_min ]),
+            np.array([ x_min, y_max ]),
+            np.array([ x_max, y_max ])
+            ]
+
+    # every grid position/direction
+    coll_boundary_thickness = int(envconf["RADIUS_AGENT"])
+    x_range = np.linspace(x_min + coll_boundary_thickness, 
+                        x_max - coll_boundary_thickness + 1, 
+                        int((width - coll_boundary_thickness*2) / space_step))
+    y_range = np.linspace(y_min + coll_boundary_thickness, 
+                        y_max - coll_boundary_thickness + 1, 
+                        int((height - coll_boundary_thickness*2) / space_step))
+    orient_range = np.arange(0, 2*np.pi, orient_step)
+
+    # count # unique views for each coord/bin
+    IDM = np.zeros((len(x_range), len(y_range)))
+    print(f'unique view matrix shape (x, y, count): {IDM.shape}')
+
+    for i, x in enumerate(x_range):
+        print(x)
+        for j, y in enumerate(y_range):
+            views_at_coord = []
+            for orient in orient_range:
+                trans_pano = agent_pano_from_xyo(envconf, NN, boundary_endpts, x, y, orient, vis_field_res)
+                if trans_pano not in views_at_coord:
+                    views_at_coord.append(trans_pano)
+            IDM[i,j] = len(views_at_coord)
+
+    with open(fr'{data_dir}/IDM/IDM_unq_c{space_step}_o{int(np.pi/orient_step)}_vsres{vis_field_res}.bin', 'wb') as f:
+        pickle.dump(IDM, f)
+
+
+def plot_IDM_unique_views(space_step, orient_step, vis_field_res=32, dpi=50):
+
+    data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
+    exp_name = 'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_seed10k_rep4'
+    env_path = fr'{data_dir}/{exp_name}/.env'
+    envconf = de.dotenv_values(env_path)
+
+    width, height = tuple(eval(envconf["ENV_SIZE"]))
+    x_min, x_max = 0, width
+    y_min, y_max = 0, height
+    coll_boundary_thickness = int(envconf["RADIUS_AGENT"])
+    x_range = np.linspace(x_min + coll_boundary_thickness, 
+                        x_max - coll_boundary_thickness + 1, 
+                        int((width - coll_boundary_thickness*2) / space_step+1))
+    y_range = np.linspace(y_min + coll_boundary_thickness, 
+                        y_max - coll_boundary_thickness + 1, 
+                        int((height - coll_boundary_thickness*2) / space_step+1))
+
+    patch_radius = int(envconf["RADIUS_RESOURCE"])
+    patch_x, patch_y = tuple(eval(envconf["RESOURCE_POS"]))
+
+    with open(fr'{data_dir}/IDM/IDM_unq_c{space_step}_o{int(np.pi/orient_step)}_vsres{vis_field_res}.bin', 'rb') as f:
+        H = pickle.load(f)
+
+
+    fig, axes = plt.subplots() 
+    axes.set_xlim(0, x_max)
+    axes.set_ylim(0, y_max)
+    h,w = 4,4
+    l,r,t,b = fig.subplotpars.left, fig.subplotpars.right, fig.subplotpars.top, fig.subplotpars.bottom
+    fig.set_size_inches( float(w)/(r-l) , float(h)/(t-b) )
+
+    X,Y = np.meshgrid(x_range, y_range)
+    im = axes.pcolormesh(X, Y, H.T, cmap='plasma')
+    # axes.pcolormesh(X, Y, H.T, cmap='plasma', norm=mpl.colors.Normalize(vmin=110)) # for scale=0.5
+    # print(np.max(H), np.min(H))
+    # print(np.sort(H.flatten())[2500:3500])
+    from mpl_toolkits.axes_grid1 import make_axes_locatable
+    divider = make_axes_locatable(axes)
+    cax1 = divider.append_axes("right", size="5%", pad=0.1)
+    fig.colorbar(im, cax=cax1, label='Number Unique Views / Point')
+
+    axes.add_patch( plt.Circle((patch_x, height-patch_y), patch_radius, edgecolor='k', fill=False, zorder=1) )
+    plt.savefig(fr'{data_dir}/IDM/unqviews_c{space_step}_o{int(np.pi/orient_step)}_vsres{vis_field_res}.png', dpi=dpi)
+    plt.close()
+    # plt.show()
+
 
 # -------------------------- script -------------------------- #
 
@@ -2618,7 +2879,6 @@ def run_gamut(group_name, names, dpi):
         else:
             plot_agent_trajs(name, gen, space_step, orient_step, timesteps, ex_lines=True, dpi=dpi)
 
-        #if name not in data:
         act_mean, act_min, act_max = plot_traj_vecfield(name, gen, space_step, orient_step, timesteps, plot_type='_avgact', dpi=dpi)
         _, _, _ = plot_traj_vecfield(name, gen, space_step, orient_step, timesteps, plot_type='_avgori', dpi=dpi)
         len_mean, len_min, len_max = plot_traj_vecfield(name, gen, space_step, orient_step, timesteps, plot_type='_avglen', dpi=dpi)
@@ -2627,39 +2887,31 @@ def run_gamut(group_name, names, dpi):
         corr_peaks, decorr_time, histo_avg_init, histo_avg_patch, histo_peaks_init, histo_peaks_patch, dirent_init, dirent_patch = plot_agent_orient_corr(name, gen, space_step, orient_step, timesteps, dpi=dpi)
         # angle_medians = plot_agent_valnoise_dists(name, noise_types, dpi=dpi)
 
-        # # action data
-        # orient_step = np.pi/32
-        # save_name_act = fr'{data_dir}/action_maps/{name}_{gen}_c{space_step}_o{int(np.pi/orient_step)}_action.bin'
-        # action_exists = False
-        # if os.path.exists(save_name_act):
-        #     print('action already built')
-        #     action_exists = True
-        #     with open(save_name_act, 'rb') as f:
-        #         act_matrix = pickle.load(f)
-        #     min_action, max_action = act_matrix.min(), act_matrix.max()
+        # action data
+        orient_step = np.pi/32
+        save_name_act = fr'{data_dir}/action_maps/{name}_{gen}_c{space_step}_o{int(np.pi/orient_step)}_action.bin'
+        action_exists = False
+        if os.path.exists(save_name_act):
+            print('action already built')
+            action_exists = True
+            with open(save_name_act, 'rb') as f:
+                act_matrix = pickle.load(f)
+            min_action, max_action = act_matrix.min(), act_matrix.max()
+        else:
+            print('building action map')
+            min_action, max_action = build_action_matrix(name, gen, space_step, orient_step)
 
-        # if name in data:
-        #     print('already there + added decorr time')
-        #     corr_peaks, histo_avg_init, histo_avg_patch, histo_peaks_init, histo_peaks_patch, dirent_init, dirent_patch, min_action, max_action, avglen_mean, avglen_med, avglen_min, avglen_max, pkf_mean, pkf_med, pkf_min, pkf_max, pkt_mean, pkt_med, pkt_min, pkt_max, def_mean, def_med, def_min, def_max, det_mean, det_med, det_min, det_max, act_mean, act_min, act_max, len_mean, len_min, len_max, de_mean, de_min, de_max = data[name]
-
-        # else:
-        #     print('building action map')
-        #     min_action, max_action = build_action_matrix(name, gen, space_step, orient_step)
-
-        #     avglen_mean, avglen_med, avglen_min, avglen_max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_avg', colored='len', dpi=dpi)
-        #     mean, med, min, max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_avg', colored='ori', dpi=dpi)
-        #     pkf_mean, pkf_med, pkf_min, pkf_max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_peaks_fwd', colored='count', ex_lines=True, dpi=dpi)
-        #     pkt_mean, pkt_med, pkt_min, pkt_max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_peaks_turn', colored='count', ex_lines=True, dpi=dpi)
-        #     def_mean, def_med, def_min, def_max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_dirent_fwd', dpi=dpi)
-        #     det_mean, det_med, det_min, det_max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_dirent_turn', dpi=dpi)
-
-        #     if name in data_old:
-        #         act_mean, act_min, act_max, len_mean, len_min, len_max, de_mean, de_min, de_max = data_old[name]
-        #     else:
-        #         pass
+        avglen_mean, avglen_med, avglen_min, avglen_max, basin_patch_dist = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_avg', colored='len', dpi=dpi)
+        mean, med, min, max, basin_patch_dist = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_avg', colored='ori', dpi=dpi)
+        # pkf_mean, pkf_med, pkf_min, pkf_max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_peaks_fwd', colored='count', ex_lines=True, dpi=dpi)
+        # pkt_mean, pkt_med, pkt_min, pkt_max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_peaks_turn', colored='count', ex_lines=True, dpi=dpi)
+        # def_mean, def_med, def_min, def_max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_dirent_fwd', dpi=dpi)
+        # det_mean, det_med, det_min, det_max = plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_dirent_turn', dpi=dpi)
 
         # data[name] = (corr_peaks, decorr_time, histo_avg_init, histo_avg_patch, histo_peaks_init, histo_peaks_patch, dirent_init, dirent_patch, min_action, max_action, avglen_mean, avglen_med, avglen_min, avglen_max, pkf_mean, pkf_med, pkf_min, pkf_max, pkt_mean, pkt_med, pkt_min, pkt_max, def_mean, def_med, def_min, def_max, det_mean, det_med, det_min, det_max, act_mean, act_min, act_max, len_mean, len_min, len_max, de_mean, de_min, de_max)
-        data[name] = (corr_peaks, decorr_time, histo_avg_init, histo_avg_patch, histo_peaks_init, histo_peaks_patch, dirent_init, dirent_patch, act_mean, act_min, act_max, len_mean, len_min, len_max, de_mean, de_min, de_max)
+        # data[name] = (corr_peaks, decorr_time, histo_avg_init, histo_avg_patch, histo_peaks_init, histo_peaks_patch, dirent_init, dirent_patch, act_mean, act_min, act_max, len_mean, len_min, len_max, de_mean, de_min, de_max)
+        # data[name] = basin_patch_dist
+        data[name] = (corr_peaks, decorr_time, histo_avg_init, histo_avg_patch, histo_peaks_init, histo_peaks_patch, dirent_init, dirent_patch, act_mean, act_min, act_max, len_mean, len_min, len_max, de_mean, de_min, de_max, basin_patch_dist)
         print(f'data dict len: {len(data)}')
         print('')
 
@@ -2671,20 +2923,26 @@ def run_gamut(group_name, names, dpi):
             save_name_traj = fr'{data_dir}/traj_matrices/{name}_{gen}_c{space_step}_o8_t{timesteps}_{rank}_e{int(eye)}.bin'
             if os.path.exists(save_name_traj):
                 os.remove(save_name_traj)
-        # if not action_exists:
-        #     save_name_act = fr'{data_dir}/action_maps/{name}_{gen}_c{space_step}_o32_action.bin'
-        #     if os.path.exists(save_name_act):
-        #         os.remove(save_name_act)
+        if not action_exists:
+            save_name_act = fr'{data_dir}/action_maps/{name}_{gen}_c{space_step}_o32_action.bin'
+            if os.path.exists(save_name_act):
+                os.remove(save_name_act)
 
 
 
 
 
-def analyze_gamut(group_type, data_type):
+def analyze_gamut(group_type, plot_type):
 
     data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
-    with open(fr'{data_dir}/traj_matrices/gamut_labeled.bin', 'rb') as f:
-        data = pickle.load(f)
+    # with open(fr'{data_dir}/traj_matrices/gamut_labeled.bin', 'rb') as f:
+    #     data = pickle.load(f)
+    # print(f'data dict len: {len(data)}')
+    with open(fr'{data_dir}/traj_matrices/gamut_visall_nodist_labeled.bin', 'rb') as f:
+        data1 = pickle.load(f)
+    with open(fr'{data_dir}/traj_matrices/gamut_vis8_dist_labeled.bin', 'rb') as f:
+        data2 = pickle.load(f)
+    data = data1|data2
     print(f'data dict len: {len(data)}')
 
     vis6 = []
@@ -2712,44 +2970,49 @@ def analyze_gamut(group_type, data_type):
             val_matrix = pickle.load(f)
         fitness = np.mean(val_matrix)
 
+        if len(data[name][0]) != 18:
+            print(f'skipping {name}')
+            continue
+        bpdist = list(data[name][0])[17]
+
         data_tuple, label = data[name]
 
         if 'vis6' in name:
-            vis6.append((name, data_tuple, fitness, label))
+            vis6.append((name, data_tuple, fitness, bpdist, label))
         elif 'vis8' in name and 'dist' not in name and 'CNN12' not in name:
-            vis8.append((name, data_tuple, fitness, label))
+            vis8.append((name, data_tuple, fitness, bpdist, label))
         elif 'vis10' in name:
-            vis10.append((name, data_tuple, fitness, label))
+            vis10.append((name, data_tuple, fitness, bpdist, label))
         elif 'vis12' in name:
-            vis12.append((name, data_tuple, fitness, label))
+            vis12.append((name, data_tuple, fitness, bpdist, label))
         elif 'vis14' in name:
-            vis14.append((name, data_tuple, fitness, label))
+            vis14.append((name, data_tuple, fitness, bpdist, label))
         elif 'vis16' in name:
-            vis16.append((name, data_tuple, fitness, label))
+            vis16.append((name, data_tuple, fitness, bpdist, label))
         elif 'vis18' in name:
-            vis18.append((name, data_tuple, fitness, label))
+            vis18.append((name, data_tuple, fitness, bpdist, label))
         elif 'vis20' in name:
-            vis20.append((name, data_tuple, fitness, label))
+            vis20.append((name, data_tuple, fitness, bpdist, label))
         elif 'vis24' in name:
-            vis24.append((name, data_tuple, fitness, label))
+            vis24.append((name, data_tuple, fitness, bpdist, label))
         elif 'vis32' in name:
-            vis32.append((name, data_tuple, fitness, label))
+            vis32.append((name, data_tuple, fitness, bpdist, label))
         elif 'maxWF' in name:
-            maxWF.append((name, data_tuple, fitness, label))
+            maxWF.append((name, data_tuple, fitness, bpdist, label))
         elif 'p9WF' in name:
-            p8WF.append((name, data_tuple, fitness, label))
+            p8WF.append((name, data_tuple, fitness, bpdist, label))
         elif 'p8WF' in name:
-            p6WF.append((name, data_tuple, fitness, label))
+            p6WF.append((name, data_tuple, fitness, bpdist, label))
         elif 'mlWF' in name:
-            p5WF.append((name, data_tuple, fitness, label))
+            p5WF.append((name, data_tuple, fitness, bpdist, label))
         elif 'mWF' in name:
-            p4WF.append((name, data_tuple, fitness, label))
+            p4WF.append((name, data_tuple, fitness, bpdist, label))
         elif 'msWF' in name:
-            p3WF.append((name, data_tuple, fitness, label))
+            p3WF.append((name, data_tuple, fitness, bpdist, label))
         elif '_sWF' in name:
-            p2WF.append((name, data_tuple, fitness, label))
+            p2WF.append((name, data_tuple, fitness, bpdist, label))
         elif 'ssWF' in name:
-            p1WF.append((name, data_tuple, fitness, label))
+            p1WF.append((name, data_tuple, fitness, bpdist, label))
         else: print(f'{name}, not included')
 
     if group_type == 'vis':
@@ -2869,8 +3132,10 @@ def analyze_gamut(group_type, data_type):
 
 
     ### plot class fitness distributions ###
-    fig, ax1 = plt.subplots(figsize=(6,4)) 
+    fig, ax1 = plt.subplots(figsize=(7,4)) 
     cmap = plt.get_cmap('Spectral')
+    cmap_points = plt.get_cmap('plasma')
+    norm = plt.Normalize(0,500)
     num_groups = len(group_list)
 
     if group_type == 'vis':
@@ -2884,34 +3149,38 @@ def analyze_gamut(group_type, data_type):
 
     for g_num, (group_name, group_data) in enumerate(zip(group_list_str, group_list)):
 
-        BD,IS,DP,BD_IS,IS_DP,DP_BD = [],[],[],[],[],[]
+        BD_fit,IS_fit,DP_fit = [],[],[]
+        BD_bpd,IS_bpd,DP_bpd = [],[],[]
         labels = ['BD','IS','DP','BD_IS','IS_DP','DP_BD']
         colors = ['cornflowerblue', 'tomato', 'forestgreen', 'darkorchid', 'gold', 'aquamarine']
 
+        for name, data_tuple, fitness, bpdist, label in group_data:
 
-        for name, data_tuple, fitness, label in group_data:
             if label == 'BD':
-                BD.append(int(fitness))
+                BD_fit.append(int(fitness))
+                BD_bpd.append(int(bpdist))
             elif label == 'IS':
-                IS.append(int(fitness))
+                IS_fit.append(int(fitness))
+                IS_bpd.append(int(bpdist))
             elif label == 'DP':
-                DP.append(int(fitness))
-            # elif label == 'BD/IS':
-            #     BD_IS.append(fitness)
-            # elif label == 'IS/DP':
-            #     IS_DP.append(fitness)
-            # elif label == 'DP/BD':
-            #     DP_BD.append(fitness)
+                DP_fit.append(int(fitness))
+                DP_bpd.append(int(bpdist))
         ax1.axvline(x = g_num - width/2, color='k', linestyle='--', linewidth=0.5)
 
-        for l_num, (data, label, color) in enumerate(zip([BD,IS,DP], labels, colors)):
-        # for l_num, (data, label, color) in enumerate(zip([BD,IS,DP,BD_IS,IS_DP,DP_BD], labels, colors)):
+        for l_num, (fit, bpd, label, color) in enumerate(zip([BD_fit,IS_fit,DP_fit], [BD_bpd,IS_bpd,DP_bpd], labels, colors)):
             pos = g_num + l_num/num_labels
+
+            if plot_type == 'fitness': 
+                data = fit
+                other = bpd
+            elif plot_type == 'basin_patch_dist': 
+                data = bpd
+                other = fit
             print(group_name, label, len(data), data)
 
             if data:
                 if len(data) < 5:
-                    # continue
+                    continue
                     l0 = ax1.violinplot(data, 
                                 positions=[pos],
                                 widths=width, 
@@ -2955,28 +3224,136 @@ def analyze_gamut(group_type, data_type):
                         x = beeswarm(data)
                     else:
                         x = 0
-                    ax1.scatter(pos + x*width/2, data, c=color, s=.5, alpha=1)
+                    ax1.scatter(pos + x*width/2, data, c=color, s=1, alpha=1, clip_on=False, zorder=10)
+                    # print(list(x))
+                    # ax1.scatter(pos + x*width/2, data, c=cmap_points(norm(other)), s=1, alpha=1, clip_on=False, zorder=10)
+
+                    # ax1.scatter(pos + x[]*width/2, data, exs_vals[:-1], facecolors='none', edgecolors='k', s=5, alpha=1, clip_on=False, zorder=10)
+
+    # examples
+
+    if plot_type == 'fitness':
+        exs_PT = np.array([
+            [256,-.5],
+            [394,0],
+            [184,.5],
+        ])
+    elif plot_type == 'basin_patch_dist':
+        exs_PT = np.array([
+            [161,0.91666667],
+            [40,0],
+            [28,0.06944444],
+        ])
+
+    if group_type == 'vis':
+        exs_GT = np.array([
+            1+1/num_labels,
+            1+0/num_labels,
+        ])
+        ax1.scatter(exs_GT + exs_PT[:-1,1]*width/2, exs_PT[:-1,0], facecolors='none', edgecolors='k', s=5, alpha=1, clip_on=False, zorder=10)
+    elif group_type == 'dist':
+        exs_GT = np.array([
+            0+1/num_labels,
+            0+0/num_labels,
+            8+2/num_labels,
+        ])
+        ax1.scatter(exs_GT + exs_PT[:,1]*width/2, exs_PT[:,0], facecolors='none', edgecolors='k', s=5, alpha=1, clip_on=False, zorder=10)
 
     ax1.axvline(x = g_num - width/2 + 1, color='k', linestyle='--', linewidth=0.5)
 
     # labs = [l.get_label() for l in lns]
     # ax1.legend(lns, labs, loc='upper left')
-    ax1.legend(*zip(*vlabs), loc='upper left')
+    if group_type == 'vis': 
+        vlabs.append(vlabs.pop(0))
+    elif group_type == 'dist': 
+        # vlabs.append(vlabs.pop(1))
+        # vlabs.append(vlabs.pop(0))
+        vlabs.insert(0,vlabs.pop(1))
+    # ax1.legend(*zip(*vlabs))
+    plt.legend(*zip(*vlabs), loc='upper left').set_zorder(11)
     # labs = [group_name for group_name,_ in groups]
 
     # ax1.set_xlabel(group_type)
     ax1.set_xticklabels(group_list_str)
-    ax1.set_ylabel('Time Taken to Reach Patch')
-    ax1.set_ylim(170,580)
+    ax1.set_xlim(-width/2, g_num - width/2 + 1)
+    # ax1.set_xlim(-width/2 - width/4, g_num - width/2 + 1 + width/4)
 
     if group_type == 'vis':
         ax1.set_xlabel('Visual Resolution')
         ax1.set_xticks(np.linspace(0 + width/2, num_groups-1 + width/2, num_groups))
     elif group_type == 'dist':
-        ax1.set_xlabel('Distance Scaling Factor')
+        ax1.set_xlabel('Distance Scaling')
         ax1.set_xticks(np.linspace(0 + width, num_groups-1 + width, num_groups))
 
-    plt.savefig(fr'{data_dir}/group_traj_dists_{group_type}_fitnessbylabel.png', dpi=100)
+    if plot_type == 'fitness':
+        ax1.set_ylabel('Time Taken to Reach Patch')
+        ax1.set_ylim(170,580)
+        plt.savefig(fr'{data_dir}/group_traj_dists_{group_type}_fitnessbylabel.png', dpi=100)
+    elif plot_type == 'basin_patch_dist':
+        ax1.set_ylabel('Basin to Patch Distance')
+        ax1.set_ylim(-25,850)
+        plt.savefig(fr'{data_dir}/group_traj_dists_{group_type}_basinpatch_dist.png', dpi=100)
+
+    plt.close()
+    # plt.show()
+
+
+
+def bpd_by_fit():
+
+    data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
+    with open(fr'{data_dir}/traj_matrices/gamut_visall_nodist_labeled.bin', 'rb') as f:
+        data = pickle.load(f)
+
+    BD_bpds_fits = []
+    IS_bpds_fits = []
+    for name in data.keys():
+
+        if len(data[name][0]) != 18:
+            print(f'skipping {name}')
+            continue
+        bpd = list(data[name][0])[17]
+
+        with open(fr'{data_dir}/{name}/val_matrix_cen.bin','rb') as f:
+            val_matrix = pickle.load(f)
+        fit = np.mean(val_matrix)
+
+        data_tuple, label = data[name]
+        if label == 'BD':
+            BD_bpds_fits.append([bpd,fit])
+        elif label == 'IS':
+            IS_bpds_fits.append([bpd,fit])
+
+    ### plot class fitness distributions ###
+    fig, ax1 = plt.subplots(figsize=(7,4)) 
+
+    BD_bpds_fits = np.array(BD_bpds_fits)
+    IS_bpds_fits = np.array(IS_bpds_fits)
+
+    ax1.scatter(BD_bpds_fits[:,0], BD_bpds_fits[:,1], c='cornflowerblue', s=5, alpha=.7)
+    ax1.scatter(IS_bpds_fits[:,0], IS_bpds_fits[:,1], c='tomato', s=5, alpha=.7)
+
+    # xseq = np.linspace(0, 600, num=100)
+    # b, a = np.polyfit(BD_bpds_fits[:,0], BD_bpds_fits[:,1], deg=1)
+    # ax1.plot(xseq, a + b * xseq, color='cornflowerblue', lw=1, alpha=.7)
+    # b, a = np.polyfit(IS_bpds_fits[:,0], IS_bpds_fits[:,1], deg=1)
+    # ax1.plot(xseq, a + b * xseq, color='tomato', lw=1, alpha=.7)
+
+    # x_bins = np.linspace(0,650,25)
+    # y_bins = np.linspace(150,600,25)
+    # X,Y = np.meshgrid(x_bins, y_bins)
+    # H,_,_ = np.histogram2d(BD_bpds_fits[:,0], BD_bpds_fits[:,1], bins=[x_bins, y_bins])
+    # # H,_,_ = np.histogram2d(IS_bpds_fits[:,0], IS_bpds_fits[:,1], bins=[x_bins, y_bins])
+    # im = ax1.pcolormesh(X, Y, H.T, cmap='plasma')
+
+    ax1.set_xlabel('Basin Patch Distance')
+    # ax1.set_xlim(0,850)
+    ax1.set_ylabel('Time Taken to Reach Patch')
+    # ax1.set_ylim(170,580)
+
+    plt.savefig(fr'{data_dir}/group_traj_dists_basinpatchdist_x_fitness.png', dpi=100)
+    # plt.savefig(fr'{data_dir}/group_traj_dists_basinpatchdist_x_fitness_BDhm.png', dpi=100)
+    # plt.savefig(fr'{data_dir}/group_traj_dists_basinpatchdist_x_fitness_IShm.png', dpi=100)
     plt.close()
     # plt.show()
 
@@ -2988,9 +3365,12 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
 
     print(f'plotting {data_type_x} vs {data_type_y} for {group}')
     data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
-    if group == 'gamut':
-        with open(fr'{data_dir}/traj_matrices/{group}_labeled.bin', 'rb') as f:
+    # if group == 'main_fig':
+    if group == 'gamut_noise' or group == 'gamut_pinball' or group == 'gamut_bound':
+        with open(fr'{data_dir}/traj_matrices/gamut_visall_nodist_labeled.bin', 'rb') as f:
             data = pickle.load(f)
+        # with open(fr'{data_dir}/traj_matrices/{group}.bin', 'rb') as f:
+        #     data = pickle.load(f)
         print(f'data dict len: {len(data)}')
 
         vis6 = []
@@ -3015,10 +3395,12 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
         for name in data.keys():
 
             data_tuple, label = data[name]
+            # data_tuple = data[name]
+            # label = None
 
             if 'vis6' in name:
                 vis6.append((data_tuple, name, label))
-            elif 'vis8' in name and 'dist' not in name and 'CNN12' not in name:
+            elif 'vis8' in name and 'WF' not in name and 'CNN12' not in name:
                 vis8.append((data_tuple, name, label))
             elif 'vis10' in name:
                 vis10.append((data_tuple, name, label))
@@ -3090,6 +3472,7 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
         num_groups = len(group_list)
 
         data_list_str = ['corr_peaks', 'decorr_time', 'histo_avg_init', 'histo_avg_patch', 'histo_peaks_init', 'histo_peaks_patch', 'dirent_init', 'dirent_patch', 'min_action', 'max_action', 'avglen_mean', 'avglen_med', 'avglen_min', 'avglen_max', 'pkf_mean', 'pkf_med', 'pkf_min', 'pkf_max', 'pkt_mean', 'pkt_med', 'pkt_min', 'pkt_max', 'def_mean', 'def_med', 'def_min', 'def_max', 'det_mean', 'det_med', 'det_min', 'det_max', 'act_mean', 'act_min', 'act_max', 'len_mean', 'len_min', 'len_max', 'de_mean', 'de_min', 'de_max']
+        # data_list_str = ['corr_peaks', 'decorr_time', 'histo_avg_init', 'histo_avg_patch', 'histo_peaks_init', 'histo_peaks_patch', 'dirent_init', 'dirent_patch', 'act_mean', 'act_min', 'act_max', 'len_mean', 'len_min', 'len_max', 'de_mean', 'de_min', 'de_max']
 
     elif group == 'gamut_visall_nodist':
         with open(fr'{data_dir}/traj_matrices/{group}_labeled.bin', 'rb') as f:
@@ -3156,7 +3539,7 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
 
         data_list_str = ['corr_peaks', 'decorr_time', 'histo_avg_init', 'histo_avg_patch', 'histo_peaks_init', 'histo_peaks_patch', 'dirent_init', 'dirent_patch', 'act_mean', 'act_min', 'act_max', 'len_mean', 'len_min', 'len_max', 'de_mean', 'de_min', 'de_max']
 
-    elif group == 'gamut_vis8_dist' or group == 'gamut_vis32_dist':
+    elif group == 'gamut_vis8_dist' or group == 'gamut_vis16_dist' or group == 'gamut_vis32_dist':
         with open(fr'{data_dir}/traj_matrices/{group}_labeled.bin', 'rb') as f:
             data = pickle.load(f)
         print(f'data dict len: {len(data)}')
@@ -3264,16 +3647,20 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
 
         data_list_str = ['corr_peaks', 'decorr_time', 'histo_avg_init', 'histo_avg_patch', 'histo_peaks_init', 'histo_peaks_patch', 'dirent_init', 'dirent_patch', 'act_mean', 'act_min', 'act_max', 'len_mean', 'len_min', 'len_max', 'de_mean', 'de_min', 'de_max']
 
-    elif group == 'all':
+    elif group == 'all' or group == 'main_fig':
+
         with open(fr'{data_dir}/traj_matrices/gamut_visall_nodist_labeled.bin', 'rb') as f:
             data1 = pickle.load(f)
         with open(fr'{data_dir}/traj_matrices/gamut_vis8_dist_labeled.bin', 'rb') as f:
             data2 = pickle.load(f)
-        # with open(fr'{data_dir}/traj_matrices/gamut_vis16_dist_labeled.bin', 'rb') as f:
-        #     data1 = pickle.load(f)
-        with open(fr'{data_dir}/traj_matrices/gamut_vis32_dist_labeled.bin', 'rb') as f:
-            data4 = pickle.load(f)
-        data = data1 | data2 | data4
+        if group == 'all':
+            with open(fr'{data_dir}/traj_matrices/gamut_vis16_dist_labeled.bin', 'rb') as f:
+                data3 = pickle.load(f)
+            with open(fr'{data_dir}/traj_matrices/gamut_vis32_dist_labeled.bin', 'rb') as f:
+                data4 = pickle.load(f)
+            data = data1 | data2 | data3 | data4
+        else:
+            data = data1 | data2
         print(f'data dict len: {len(data)}')
 
         vis6_nodist = []
@@ -3434,18 +3821,26 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
 
         group_list = []
         group_list_str = []
-        for g, gs in zip(vis_groups, vis_groups_str):
-            group_list.append(g)
-            group_list_str.append(gs)
-        for g, gs in zip(vis8_dist_groups, vis8_dist_groups_str):
-            group_list.append(g)
-            group_list_str.append(gs)
-        # for g, gs in zip(vis16_dist_groups, vis16_dist_groups_str):
-        #     group_list.append(g)
-        #     group_list_str.append(gs)
-        for g, gs in zip(vis32_dist_groups, vis32_dist_groups_str):
-            group_list.append(g)
-            group_list_str.append(gs)
+        if group == 'main_fig':
+            for g, gs in zip(vis8_dist_groups, vis8_dist_groups_str):
+                group_list.append(g)
+                group_list_str.append(gs)
+            for g, gs in zip(vis_groups, vis_groups_str):
+                group_list.append(g)
+                group_list_str.append(gs)
+        elif group == 'all':
+            for g, gs in zip(vis_groups, vis_groups_str):
+                group_list.append(g)
+                group_list_str.append(gs)
+            for g, gs in zip(vis8_dist_groups, vis8_dist_groups_str):
+                group_list.append(g)
+                group_list_str.append(gs)
+            for g, gs in zip(vis16_dist_groups, vis16_dist_groups_str):
+                group_list.append(g)
+                group_list_str.append(gs)
+            for g, gs in zip(vis32_dist_groups, vis32_dist_groups_str):
+                group_list.append(g)
+                group_list_str.append(gs)
         num_groups = len(group_list)
 
         data_list_str = ['corr_peaks', 'decorr_time', 'histo_avg_init', 'histo_avg_patch', 'histo_peaks_init', 'histo_peaks_patch', 'dirent_init', 'dirent_patch', 'act_mean', 'act_min', 'act_max', 'len_mean', 'len_min', 'len_max', 'de_mean', 'de_min', 'de_max']
@@ -3502,8 +3897,7 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
         # plt.colorbar(im, label='Number Overlapping Runs')
 
     else:
-        data_x, data_y, colors, fitnesses = [],[],[],[]
-        points, wedges = [],[]
+        data_x, data_y, fitnesses = [],[],[]
         for g_num, (group_name, group_data) in enumerate(zip(group_list_str, group_list)):
 
             BD,IS,DP,BD_IS,IS_DP,DP_BD = 0,0,0,0,0,0
@@ -3519,12 +3913,12 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
                 #     print(run_name, data[data_type_x], data[data_type_y])
                 # if data[data_type_x] > 100 and data[data_type_y] > 0.65 and label == 'BD/IS':
                 #     print(run_name, data[data_type_x], data[data_type_y])
-                if data[data_type_x] > 155 and data[data_type_y] > 0.65 and label == 'IS/DP':
-                    print(run_name, data[data_type_x], data[data_type_y])
-
-                # if data[data_type_x] > 125 and label == 'BD/IS':
+                # if data[data_type_x] > 155 and data[data_type_y] > 0.65 and label == 'IS/DP':
                 #     print(run_name, data[data_type_x], data[data_type_y])
-                # if data[data_type_x] < 150 and label == 'DP':
+
+                # if data[data_type_x] < 115 and data[data_type_x] > 70 and data[data_type_y] < 0.65 and label == 'IS':
+                #     print(run_name, data[data_type_x], data[data_type_y])
+                # if data[data_type_x] < 140 and label == 'DP':
                 #     print(run_name, data[data_type_x], data[data_type_y])
                 # if data[data_type_y] < 0.7 and label == 'IS/DP':
                 #     print(run_name, data[data_type_x], data[data_type_y])
@@ -3534,42 +3928,26 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
                 #     print(run_name, data[data_type_x], data[data_type_y])
                 
                 if sc_type == 'label':
-                    rot = 45
-                    a = 0.5
                     if label == 'BD':
-                        ax1.scatter(data[data_type_x], data[data_type_y], color='cornflowerblue', alpha=a)
+                        ax1.scatter(data[data_type_x], data[data_type_y], color='cornflowerblue', alpha=.5)
                         BD += 1
                     elif label == 'IS':
-                        ax1.scatter(data[data_type_x], data[data_type_y], color='tomato', alpha=a)
+                        ax1.scatter(data[data_type_x], data[data_type_y], color='tomato', alpha=.5)
                         IS += 1
                     elif label == 'DP':
-                        ax1.scatter(data[data_type_x], data[data_type_y], color='forestgreen', alpha=a)
+                        ax1.scatter(data[data_type_x], data[data_type_y], color='forestgreen', alpha=.5)
                         DP += 1
                     elif label == 'BD/IS':
-                        # point = (data[data_type_x], data[data_type_y])
-                        # # point = (data[data_type_x]/(1+.0021*data[data_type_x])-7, data[data_type_y])
-                        # # point = (data[data_type_x]/(1+.0023*data[data_type_x])-6, data[data_type_y])
-                        # TL = mpl.patches.Wedge(point, 4, theta1=0+rot, theta2=180+rot, color='cornflowerblue', alpha=.6)
-                        # BR = mpl.patches.Wedge(point, 4, theta1=180+rot, theta2=360+rot, color='tomato', alpha=.6)
-                        # coll = mpl.collections.PatchCollection(
-                        #     [TL,BR], match_original=True, offsets=[point,point],
-                        #     transform=mpl.transforms.IdentityTransform(),
-                        #     transOffset=ax1.transData
-                        #     )
-                        # ax1.add_collection(coll)
-                        # ax1.scatter(data[data_type_x], data[data_type_y], color='darkorchid', alpha=.6)
-                        ax1.scatter(data[data_type_x], data[data_type_y], color='cornflowerblue', marker=MarkerStyle('o', fillstyle='left'), alpha=a)
-                        ax1.scatter(data[data_type_x], data[data_type_y], color='tomato', marker=MarkerStyle('o', fillstyle='right'), alpha=a)
+                        ax1.scatter(data[data_type_x], data[data_type_y], color='cornflowerblue', marker=MarkerStyle('o', fillstyle='left'), alpha=.5)
+                        ax1.scatter(data[data_type_x], data[data_type_y], color='tomato', marker=MarkerStyle('o', fillstyle='right'), alpha=.5)
                         BD_IS += 1
                     elif label == 'IS/DP':
-                        # ax1.scatter(data[data_type_x], data[data_type_y], color='gold', alpha=.6)
-                        ax1.scatter(data[data_type_x], data[data_type_y], color='tomato', marker=MarkerStyle('o', fillstyle='left'), alpha=a)
-                        ax1.scatter(data[data_type_x], data[data_type_y], color='forestgreen', marker=MarkerStyle('o', fillstyle='right'), alpha=a)
+                        ax1.scatter(data[data_type_x], data[data_type_y], color='tomato', marker=MarkerStyle('o', fillstyle='left'), alpha=.5)
+                        ax1.scatter(data[data_type_x], data[data_type_y], color='forestgreen', marker=MarkerStyle('o', fillstyle='right'), alpha=.5)
                         IS_DP += 1
                     elif label == 'DP/BD':
-                        # ax1.scatter(data[data_type_x], data[data_type_y], color='aquamarine', alpha=.6)
-                        ax1.scatter(data[data_type_x], data[data_type_y], color='forestgreen', marker=MarkerStyle('o', fillstyle='left'), alpha=a)
-                        ax1.scatter(data[data_type_x], data[data_type_y], color='cornflowerblue', marker=MarkerStyle('o', fillstyle='right'), alpha=a)
+                        ax1.scatter(data[data_type_x], data[data_type_y], color='forestgreen', marker=MarkerStyle('o', fillstyle='left'), alpha=.5)
+                        ax1.scatter(data[data_type_x], data[data_type_y], color='cornflowerblue', marker=MarkerStyle('o', fillstyle='right'), alpha=.5)
                         DP_BD += 1
 
                 elif sc_type == 'fitness':
@@ -3579,22 +3957,26 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
                     # print(run_name, label, np.min(fitnesses), np.max(fitnesses))
             
             if sc_type == 'label':
-                # print(f'{group_name}: BD,IS,DP,BD_IS,IS_DP,DP_BD: {BD,IS,DP,BD_IS,IS_DP,DP_BD}')
-                print(f'{group_name}: BD,BD_IS,IS,IS_DP,DP_BD,DP: {BD,BD_IS,IS,IS_DP,DP_BD,DP}') # plot order
+                print(f'{group_name}: BD,BD_IS,IS,IS_DP,DP_BD,DP: {BD,BD_IS,IS,IS_DP,DP_BD,DP}') # plot order for occurrence bar
             elif sc_type == 'group':
                 ax1.scatter(data_x, data_y, color=cmap(g_num/num_groups), alpha=.5, label=group_name)
                 data_x,data_y = [],[]
 
-        # if sc_type == 'label':
-        #     ax1.scatter(data_x, data_y, color=colors, alpha=.5)
         if sc_type == 'fitness':
             norm = mpl.colors.Normalize(vmin=180, vmax=500)
             ax1.scatter(data_x, data_y, c=fitnesses, cmap='plasma', norm=norm, alpha=.5)
             print(f'fitness range: {np.min(fitnesses), np.max(fitnesses)}')
             # for x,y,f in zip(data_x, data_y, fitnesses):
             #     print(x,y,f, np.linalg.norm([x-173,y-.87]))
+    
+    # main_fig_exs = np.array([
+    #     [121,.76],
+    #     [31,.39],
+    #     [173,.87]
+    # ])
+    # ax1.scatter(main_fig_exs[:,0], main_fig_exs[:,1], facecolors='none', edgecolors='k')
 
-    if (data_type_x,data_type_y) == (1,36):
+    if ((data_type_x,data_type_y) == (1,36) and group == 'gamut') or ((data_type_x,data_type_y) == (1,14)):
         ax1.set_xlabel('Decorrelation Time')
         ax1.set_ylabel('Directedness')
     else:
@@ -3767,17 +4149,14 @@ def gamut_2d(data_type_x, data_type_y, group, cluster=None, heatmap=None, sc_typ
 #         plt.close()
 
 
-def gamut_table(group, data_type_x=None, data_type_y=None):
+def gamut_table(group):
 
     data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
     with open(fr'{data_dir}/traj_matrices/{group}.bin', 'rb') as f:
         data = pickle.load(f)
     print(f'data dict len: {len(data)}')
 
-    # new_data = {}
-
     for name in data.keys():
-
         print(name)
         # print(name, data[name])
         # new_data[name] = data[name][0]
@@ -3787,6 +4166,32 @@ def gamut_table(group, data_type_x=None, data_type_y=None):
         #     print(f'decorr_time: {round(data[name][1],2)}')
         #     print(f'de_mean: {round(data[name][14],2)}')
         # print('')
+        # if len(data[name]) < 18:
+        #     print(name, 'incomplete')
+        #     continue
+
+        # with open(fr'{data_dir}/{name}/val_matrix_cen.bin','rb') as f:
+        #     val_matrix = pickle.load(f)
+        # fit = np.mean(val_matrix)
+
+        # print(name, int(data[name][1]), round(data[name][14],2), int(data[name][17]), int(fit))
+
+
+    # with open(fr'{data_dir}/traj_matrices/{group}_rerun.bin', 'rb') as f:
+    #     data_extra = pickle.load(f)
+
+    # new_data = {}
+    # for name in data.keys():
+    #     if name not in data_extra:
+    #         print(name, 'no data_extra')
+    #         new_data[name] = data[name]
+    #         continue
+    #     new_entry = list(data[name])
+    #     new_entry.append(data_extra[name])
+    #     new_data[name] = tuple(new_entry)
+    #     print(name, len(data[name]), data_extra[name], len(new_data[name]))
+
+    # print(f'data dict len: {len(new_data)}')
 
     # with open(fr'{data_dir}/traj_matrices/{group}.bin', 'wb') as f:
     #     pickle.dump(new_data, f)
@@ -3796,10 +4201,11 @@ def gamut_label(group):
 
     data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
 
-    if group == 'gamut_visall_nodist':
-        with open(fr'{data_dir}/traj_matrices/{group}.bin', 'rb') as f:
-            data = pickle.load(f)
-        print(f'data dict len: {len(data)}')
+    with open(fr'{data_dir}/traj_matrices/{group}.bin', 'rb') as f:
+        data = pickle.load(f)
+    print(f'data dict len: {len(data)}')
+
+    if group == 'gamut_visall_nodist' or group == 'gamut':
 
         data['sc_CNN12_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep18'] = (data['sc_CNN12_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep18'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis6_PGPE_ss20_mom8_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis6_PGPE_ss20_mom8_rep0'], 'BD')
@@ -4102,15 +4508,8 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_seed10k_rep14'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_seed10k_rep17'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_seed10k_rep18'], 'BD')
-
-        with open(fr'{data_dir}/traj_matrices/{group}_labeled.bin', 'wb') as f:
-            pickle.dump(data, f)
     
-    elif group == 'gamut_vis8_dist':
-
-        with open(fr'{data_dir}/traj_matrices/{group}.bin', 'rb') as f:
-            data = pickle.load(f)
-        print(f'data dict len: {len(data)}')
+    if group == 'gamut_vis8_dist' or group == 'gamut':
 
         data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_rep0'], 'DP/BD')
         data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_rep1'], 'DP')
@@ -4398,15 +4797,297 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep18'], 'IS')
         data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep19'], 'IS')
 
-        with open(fr'{data_dir}/traj_matrices/{group}_labeled.bin', 'wb') as f:
-            pickle.dump(data, f)
+    if group == 'gamut_vis16_dist':
 
-    elif group == 'gamut_vis32_dist':
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep1'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep3'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep4'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep5'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep6'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep7'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep8'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep10'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep11'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep15'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep16'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep19'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep1'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep3'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep4'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep5'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep6'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep7'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep8'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep10'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep11'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep15'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep16'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep17'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep19'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep1'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep3'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep4'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep5'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep6'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep7'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep8'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep10'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep11'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep14'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep15'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep16'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep17'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep19'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep1'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep3'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep4'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep5'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep6'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep7'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep8'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep10'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep11'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep15'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep16'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep17'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep19'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep1'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep2'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep3'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep4'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep5'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep6'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep7'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep8'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep10'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep11'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep14'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep15'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep16'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep17'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep19'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep1'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep3'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep4'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep5'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep6'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep7'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep8'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep9'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep10'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep11'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep13'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep15'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep16'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep17'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep19'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep0'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep1'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep3'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep4'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep5'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep6'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep7'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep8'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep10'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep11'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep12'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep14'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep15'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep16'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep17'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep19'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep1'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep3'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep4'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep5'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep6'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep7'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep8'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep10'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep11'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep12'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep13'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep15'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep16'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep17'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep18'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep19'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep1'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep2'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep3'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep4'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep5'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep6'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep7'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep8'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep9'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep10'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep11'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep15'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep16'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep17'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep18'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep19'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep1'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep3'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep4'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep5'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep6'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep7'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep8'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep9'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep10'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep11'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep12'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep14'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep15'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep16'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep17'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep18'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep19'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep1'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep2'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep3'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep4'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep5'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep6'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep7'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep8'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep9'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep11'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep12'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep13'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep14'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep15'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep17'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep18'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep0'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep1'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep2'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep3'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep4'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep5'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep6'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep7'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep8'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep9'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep10'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep11'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep12'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep13'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep14'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep15'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep16'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep17'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep18'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep19'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep3'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep4'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep5'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep6'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep7'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep8'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep9'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep11'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep12'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep13'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep15'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep17'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep18'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep19'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep0'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep1'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep2'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep3'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep4'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep5'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep6'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep7'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep8'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep9'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep10'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep11'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep13'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep14'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep15'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep18'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep19'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep0'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep1'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep5'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep9'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep10'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep11'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep12'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep14'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep15'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep16'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep0'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep2'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep5'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep9'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep10'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep11'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep12'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep13'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep16'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep17'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep18'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep19'], 'BD')
 
-        data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
-        with open(fr'{data_dir}/traj_matrices/{group}.bin', 'rb') as f:
-            data = pickle.load(f)
-        print(f'data dict len: {len(data)}')
+    if group == 'gamut_vis32_dist':
 
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep0'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep1'], 'DP')
@@ -4428,6 +5109,26 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep17'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep18'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep19'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep0'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep1'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep3'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep4'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep5'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep6'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep7'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep8'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep10'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep11'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep15'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep16'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep17'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep19'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep0'], 'DP/BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep1'], 'DP/BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep2'], 'DP')
@@ -4448,6 +5149,26 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep17'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep18'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep19'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep0'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep1'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep2'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep3'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep4'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep5'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep6'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep7'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep8'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep10'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep11'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep12'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep13'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep14'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep15'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep16'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep17'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep19'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep0'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep1'], 'DP/BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep2'], 'BD')
@@ -4468,6 +5189,26 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep17'], 'DP/BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep18'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_rep19'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep0'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep1'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep2'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep3'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep4'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep5'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep6'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep7'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep8'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep9'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep10'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep11'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep13'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep15'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep16'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep17'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep19'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep0'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep1'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep2'], 'DP')
@@ -4488,6 +5229,26 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep17'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep18'], 'IS/DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_rep19'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep0'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep1'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep2'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep3'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep4'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep5'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep6'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep7'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep8'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep9'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep10'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep11'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep12'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep13'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep15'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep16'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep17'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep18'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep19'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep0'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep1'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep2'], 'DP/BD')
@@ -4508,6 +5269,26 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep17'], 'IS/DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep18'], 'DP')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_rep19'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep0'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep1'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep2'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep3'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep4'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep5'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep6'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep7'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep8'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep9'], 'IS/DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep10'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep11'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep12'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep13'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep14'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep15'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep16'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep17'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep18'], 'DP')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep19'], 'DP/BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep0'], 'IS')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep2'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep3'], 'DP/BD')
@@ -4524,6 +5305,26 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep16'], 'BD/IS')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep17'], 'IS')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_rep18'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep0'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep1'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep2'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep2'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep3'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep4'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep5'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep6'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep7'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep8'], 'DP/BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep9'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep10'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep11'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep12'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep13'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep14'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep15'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep15'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep16'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep17'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep18'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep19'], 'IS')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep1'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep3'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep5'], 'BD')
@@ -4536,6 +5337,17 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep17'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep18'], 'IS')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_rep19'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep0'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep1'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep6'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep7'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep7'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep8'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep11'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep12'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep12'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep13'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep13'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep14'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep16'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep19'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep19'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep0'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep1'], 'BD/IS')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep6'], 'BD')
@@ -4544,16 +5356,19 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep11'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep11'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep16'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep17'], 'IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep3'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep3'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep4'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep4'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep5'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep5'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep6'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep6'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep8'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep8'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep9'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep9'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep10'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep10'], 'BD/IS')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep14'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep14'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep16'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep16'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep17'], 'BD')
+        data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep18'], 'BD')
 
-        with open(fr'{data_dir}/traj_matrices/{group}_labeled.bin', 'wb') as f:
-            pickle.dump(data, f)
-
-    elif group == 'gamut_other':
-
-        data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
-        with open(fr'{data_dir}/traj_matrices/{group}.bin', 'rb') as f:
-            data = pickle.load(f)
-        print(f'data dict len: {len(data)}')
+    if group == 'gamut_other':
 
         data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_actspacehalf_rep0'] = (data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_actspacehalf_rep0'], 'BD')
         data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_actspacehalf_rep1'] = (data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_actspacehalf_rep1'], 'IS')
@@ -4711,11 +5526,8 @@ def gamut_label(group):
         data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_fov45_rep17'] = (data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_fov45_rep17'], 'BD/IS')
         data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_fov45_rep18'] = (data['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_fov45_rep18'], 'BD')
 
-        with open(fr'{data_dir}/traj_matrices/{group}_labeled.bin', 'wb') as f:
-            pickle.dump(data, f)
-    
-    else:
-        print(f'group {group} not found')
+    with open(fr'{data_dir}/traj_matrices/{group}_labeled.bin', 'wb') as f:
+        pickle.dump(data, f)
 
 
 
@@ -4786,16 +5598,80 @@ if __name__ == '__main__':
 
     data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
 
-    # names.append('sc_CNN12_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep18')
+
+    ### ------ final figure update ------- ###
+
     # for i in [1,3,4,9,15]:
     #     names.append(f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep{str(i)}')
-    # for i in [2,3,4,9,13]:
+    # for i in [4]:
     #     names.append(f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_seed10k_rep{str(i)}')
 
-    # for i in [2,10,18]: 
+    # for i in [10,18]:
     #     names.append(f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_rep{str(i)}')
-    # for i in [12]: 
-    #     names.append(f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep{str(i)}')
+    # names.append(f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep12')
+
+    # for i in [7,11]:
+    #     names.append(f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_rep{str(i)}')
+    # names.append('sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep2')
+
+
+    # for name in names:
+    #     gen, valfit = find_top_val_gen(name, 'cen')
+    #     print(f'{name} @ {gen} w {valfit} fitness')
+
+        # dpi = 100
+
+    #     orient_step = np.pi/8
+    #     save_name_traj = fr'{data_dir}/traj_matrices/{name}_{gen}_c{space_step}_o{int(np.pi/orient_step)}_t{timesteps}_cen_e1_otherzero.bin'
+    #     print(f'save as: {save_name_traj}')
+    #     traj_exists = False
+    #     if os.path.exists(save_name_traj):
+    #         print('traj already built')
+    #         traj_exists = True
+    #     else:
+    #         build_agent_trajs_parallel(name, gen, space_step, orient_step, timesteps)
+
+        # save_name_trajmap = fr'{data_dir}/traj_matrices/{name}_{gen}_c{space_step}_o{int(np.pi/orient_step)}_t{timesteps}_cen_e1_ex_lines'
+        # # if os.path.exists(save_name_trajmap+'_100.png'):
+        # #     print('traj already plotted at dpi100')
+        # if os.path.exists(save_name_trajmap+'_50.png'):
+        #     print('traj already plotted at dpi50')
+        # # elif os.path.exists(save_name_trajmap+'.png'):
+        # #     print('traj already plotted')
+        # else:
+        #     plot_agent_trajs(name, gen, space_step, orient_step, timesteps, ex_lines=True, dpi=50)
+    
+        # plot_agent_trajs(name, gen, space_step, orient_step, timesteps, extra='3d', dpi=50)
+
+        # plot_agent_orient_corr(name, gen, space_step, orient_step=np.pi/8, timesteps=500, dpi=dpi)
+
+        # orient_step = np.pi/32
+        # save_name_act = fr'{data_dir}/action_maps/{name}_{gen}_c{space_step}_o{int(np.pi/orient_step)}_action.bin'
+        # print(f'save as: {save_name_act}')
+        # if os.path.exists(save_name_act):
+        #     print('action matrix already built')
+        #     action_exists = True
+        #     with open(save_name_act, 'rb') as f:
+        #         act_matrix = pickle.load(f)
+        #     min_action, max_action = act_matrix.min(), act_matrix.max()
+        # else:
+        #     build_action_matrix(name, gen, space_step, orient_step)
+
+        # plot_traj_vecfield(name, gen, space_step, orient_step, timesteps, plot_type='_avgact', dpi=dpi)
+        # plot_action_vecfield(name, gen, space_step, orient_step=np.pi/32, plot_type='_avg', colored='ori', dpi=dpi)
+        # plot_action_vecfield(name, gen, space_step, orient_step=np.pi/32, plot_type='_avg', colored='len', dpi=dpi)
+
+        # save_name_noise = fr'{data_dir}/{name}_valnoise_{dpi}.png'
+        # if os.path.exists(save_name_noise):
+        #     print('noise plot already built')
+        # else:
+        #     # print('not', save_name_noise)
+        # plot_agent_valnoise_dists(name, noise_types, dpi=dpi)
+
+        # orient_step = np.pi/8
+        # build_agent_trajs_parallel(name, gen, space_step, orient_step, timesteps, extra='angle_n10')
+        # plot_agent_trajs(name, gen, space_step, orient_step, timesteps, ex_lines=True, extra='angle_n10', dpi=50)
+
 
 
     ### ------ views/phys resolution scaling ------- ###
@@ -4846,16 +5722,16 @@ if __name__ == '__main__':
     # name = 'sc_CNN12_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep18'
     # gen, valfit = find_top_val_gen(name, 'cen')
     # space_step = 5
-    # # vfr = 128
+    # vfr = 8
     # orient_step = np.pi/256
-    # # # to = 0
-    # # for to in [0, np.pi/2, np.pi, 3*np.pi/2, np.pi/4, 3*np.pi/4, 5*np.pi/4, 7*np.pi/4]:
-    # #     # build_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr)
-    # #     # plot_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_rot', dpi=100)
-    # #     # plot_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_trans', dpi=200)
-    # #     # plot_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_transrot_count', dpi=200)
-    # #     # plot_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_transrot_ori', dpi=200)
-    # #     plot_IDM_ori(space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_transrot_ori_perf', dpi=200)
+    # # # # to = 0
+    # # # for to in [0, np.pi/2, np.pi, 3*np.pi/2, np.pi/4, 3*np.pi/4, 5*np.pi/4, 7*np.pi/4]:
+    # # #     # build_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr)
+    # # #     # plot_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_rot', dpi=100)
+    # # #     # plot_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_trans', dpi=200)
+    # # #     # plot_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_transrot_count', dpi=200)
+    # # #     # plot_IDM(name, gen, space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_transrot_ori', dpi=200)
+    # # #     plot_IDM_ori(space_step, orient_step, template_orient=to, vis_field_res=vfr, plot_type='_transrot_ori_perf', dpi=200)
 
     # # with open(fr'{data_dir}/IDM/views_vfr{vfr}.bin', 'rb') as f:
     # #     views = pickle.load(f)
@@ -4874,7 +5750,8 @@ if __name__ == '__main__':
     #     # print(string_one_hot(v))
     #     # build_IDM_view(name, gen, space_step, orient_step, view=v, vis_field_res=vfr)
     #     # plot_IDM_view(space_step, orient_step, view_onehot=string_one_hot(v), vis_field_res=vfr, plot_type='_transrot_ori_perf', dpi=200)
-    #     plot_IDM_view(space_step, orient_step, view_onehot=v, vis_field_res=vfr, plot_type='_transrot_ori_perf', dpi=50)
+    #     # plot_IDM_view(space_step, orient_step, view_onehot=v, vis_field_res=vfr, plot_type='_transrot_ori_perf', dpi=50)
+    #     plot_IDM_view(space_step, orient_step, view_onehot=v, vis_field_res=vfr, plot_type='_transrot_ori_perf_dist', dpi=50)
 
     # # plot_IDM_avgperfviews(space_step=5, orient_step=np.pi/256, vis_field_res=8, plot_type='_count', dpi=100)
     # # plot_IDM_avgperfviews(space_step=5, orient_step=np.pi/256, vis_field_res=8, plot_type='_ori', dpi=100)
@@ -4882,32 +5759,12 @@ if __name__ == '__main__':
     # # for name in names:
     # #     gen, valfit = find_top_val_gen(name, 'cen')
     # #     plot_IDM_avgperfviews(space_step=5, orient_step=np.pi/256, vis_field_res=8, plot_type=(name,gen), dpi=100)
+    
+    # for vfr in [8]:
+    # for vfr in [16]:
+    #     build_IDM_unique_views(name, gen, space_step, orient_step, vis_field_res=vfr)
+        # plot_IDM_unique_views(space_step, orient_step, vis_field_res=vfr, dpi=100)
 
-
-    ### ------ vecfield ------- ###
-
-    # names = ['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep1']
-    # names = ['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep3']
-    # names = ['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep4']
-    # names = ['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep9']
-    # names = ['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep15']
-    # names = ['sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_seed10k_rep3']
-    # for name in names:
-    #     gen, valfit = find_top_val_gen(name, 'cen')
-    #     print(f'{name} @ {gen} w {valfit} fitness')
-
-        # build_agent_trajs_parallel(name, gen, space_step, orient_step, timesteps)
-        # plot_agent_trajs(name, gen, space_step, orient_step, timesteps, ex_lines=True, dpi=50)
-        # plot_agent_trajs(name, gen, space_step, orient_step, timesteps, ex_lines=True, dpi=100)
-    #     plot_agent_trajs(name, gen, space_step, orient_step, timesteps, extra='3d')
-        # plot_agent_orient_corr(name, gen, space_step, orient_step=np.pi/8, timesteps=500, dpi=100)
-        # plot_traj_vecfield(name, gen, space_step, orient_step, timesteps, plot_type='_dirent', dpi=100)
-        # plot_traj_vecfield(name, gen, space_step, orient_step, timesteps, plot_type='_avgori', dpi=50)
-        # plot_traj_vecfield(name, gen, space_step, orient_step, timesteps, plot_type='_avglen', dpi=50)
-        # build_action_matrix(name, gen, space_step, orient_step)
-        # plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_avg', colored='ori', dpi=100)
-        # plot_action_vecfield(name, gen, space_step, orient_step, plot_type='_avg', colored='len', dpi=100)
-    #     angle_medians = plot_agent_valnoise_dists(name, noise_types, dpi=100)
 
 
     ### ------ perturbs ------- ###
@@ -5024,6 +5881,22 @@ if __name__ == '__main__':
     #     names.append(name)
     # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_ssWF_n0_rep{x}' for x in range(20)]:
     #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
 
     # for name in [f'sc_CNN14_FNN2_p50e20_vis6_PGPE_ss20_mom8_rep{x}' for x in range(20)]:
     #     names.append(name)
@@ -5043,24 +5916,6 @@ if __name__ == '__main__':
     #     names.append(name)
     # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_rep{x}' for x in range(20)]:
     #     names.append(name)
-
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep{x}' for x in range(20)]:
-    #     names.append(name)
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep{x}' for x in range(20)]:
-    #     names.append(name)
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep{x}' for x in range(20)]:
-    #     names.append(name)
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep{x}' for x in range(20)]:
-    #     names.append(name)
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep{x}' for x in range(20)]:
-    #     names.append(name)
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep{x}' for x in range(20)]:
-    #     names.append(name)
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep{x}' for x in range(20)]:
-    #     names.append(name)
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep{x}' for x in range(20)]:
-    #     names.append(name)
-
     # for name in [f'sc_CNN14_FNN2_p50e20_vis6_PGPE_ss20_mom8_seed10k_rep{x}' for x in range(20)]:
     #     names.append(name)
     # for name in [f'sc_CNN14_FNN2_p50e20_vis10_PGPE_ss20_mom8_seed10k_rep{x}' for x in range(20)]:
@@ -5154,6 +6009,24 @@ if __name__ == '__main__':
     # for name in [f'sc_CNN27_FNN16_p50e20_vis8_PGPE_ss20_mom8_bound1000_rep{x}' for x in range(20)]:
     #     names.append(name)
 
+
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep{x}' for x in range(20)]:
+    #     names.append(name)
+
     # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_rep{x}' for x in range(20)]:
     #     names.append(name)
     # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_rep{x}' for x in range(20)]:
@@ -5171,46 +6044,88 @@ if __name__ == '__main__':
     # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_rep{x}' for x in range(20)]:
     #     names.append(name)
 
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
 
-    # name = 'sc_CNN14_FNN2_p50e20_vis8_2xpinball_rep0'
-    # gen, valfit = find_top_val_gen(name, 'cen')
-    # plot_agent_trajs(name, gen, space_step, orient_step, timesteps, ex_lines=True, dpi=50)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_maxWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p9WF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_p8WF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mlWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_mWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_msWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_sWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis32_PGPE_ss20_mom8_dist_ssWF_n0_seed10k_rep{x}' for x in range(20)]:
+    #     names.append(name)
+
+    # names = []
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_proprio_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN16_p50e20_vis8_PGPE_ss20_mom8_proprio_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2x16_p50e20_vis8_PGPE_ss20_mom8_proprio_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_GRU16_p50e20_vis8_PGPE_ss20_mom8_proprio_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_GRUpara16_p50e20_vis8_PGPE_ss20_mom8_proprio_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # names.append('sc_CNN14_GRUpara64_p50e20_vis8_PGPE_ss20_mom8_rep0')
+    # names.append('sc_CNN14_GRUpara64_p50e20_vis8_PGPE_ss20_mom8_proprio_rep0')
+    # names.append('sc_CNN14_GRUparanoise64_p50e20_vis8_PGPE_ss20_mom8_rep0')
+    # names.append('sc_CNN14_GRUparanoise64_p50e20_vis8_PGPE_ss20_mom8_proprio_rep0')
+    # run_gamut('gamut_proprio', names, dpi=50)
+
 
     # data = {}
-    # with open(fr'{data_dir}/traj_matrices/gamut_pinball.bin', 'wb') as f:
-    #     pickle.dump(data, f)
-    names = []
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_2xpinball_rep{x}' for x in range(19)]:
-    #     names.append(name)
-    for name in [f'sc_CNN14_FNN2_p50e20_vis16_2xpinball_rep{x}' for x in range(17)]:
-        names.append(name)
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_maxWF_2xpinball_rep{x}' for x in range(20)]:
-    #     names.append(name)
-    # for name in [f'sc_CNN17_FNN16_p50e20_vis16_2xpinball_rep{x}' for x in range(20)]:
-    #     names.append(name)
-    run_gamut('gamut_pinball', names, dpi=50)
+    # with open(fr'{data_dir}/traj_matrices/gamut_FNN64.bin', 'wb') as f:
+    #         pickle.dump(data, f)
 
-    # data = {}
-    # with open(fr'{data_dir}/traj_matrices/gamut_vis16_dist.bin', 'wb') as f:
-    #     pickle.dump(data, f)
-    names = []
-    # for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_maxWF_n0_rep{x}' for x in range(20)]:
+    # n = 10
+    # for name in [f'sc_CNN14_FNN64_p50e20_vis8_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
     #     names.append(name)
-    for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p9WF_n0_rep{x+11}' for x in range(9)]:
-        names.append(name)
-    for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_p8WF_n0_rep{x}' for x in range(20)]:
-        names.append(name)
-    for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mlWF_n0_rep{x}' for x in range(20)]:
-        names.append(name)
-    for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_mWF_n0_rep{x}' for x in range(20)]:
-        names.append(name)
-    for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_msWF_n0_rep{x}' for x in range(20)]:
-        names.append(name)
-    for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_sWF_n0_rep{x}' for x in range(20)]:
-        names.append(name)
-    for name in [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_dist_ssWF_n0_rep{x}' for x in range(20)]:
-        names.append(name)
-    run_gamut('gamut_vis16_dist', names, dpi=50)
+    # for name in [f'sc_CNN14_FNN64_p50e20_vis16_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN64_p50e20_vis32_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2x64_p50e20_vis8_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2x64_p50e20_vis16_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_FNN2x64_p50e20_vis32_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_GRU64_p50e20_vis8_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_GRU64_p50e20_vis16_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_GRU64_p50e20_vis32_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_GRUpara64_p50e20_vis8_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_GRUpara64_p50e20_vis16_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN14_GRUpara64_p50e20_vis32_PGPE_ss20_mom8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # run_gamut('gamut_FNN64', names, dpi=50)
 
 
     # analyze_gamut --> input index for desired data type
@@ -5219,7 +6134,24 @@ if __name__ == '__main__':
     # 14-21: pkf_mean, pkf_med, pkf_min, pkf_max, pkt_mean, pkt_med, pkt_min, pkt_max, 
     # 22-29: def_mean, def_med, def_min, def_max, det_mean, det_med, det_min, det_max, 
     # 30-38: act_mean, act_min, act_max, len_mean, len_min, len_max, de_mean, de_min, de_max
-    
+
+    # gamut_table('gamut_visall_nodist')
+    # gamut_table('gamut_vis8_dist')
+    # gamut_table('gamut_vis16_dist')
+    # gamut_table('gamut_vis32_dist')
+    # gamut_table('gamut_other')
+    # gamut_table('gamut_bound')
+    # gamut_table('gamut_pinball')
+
+    # gamut_label('gamut')
+    # gamut_label('gamut_visall_nodist')
+    # gamut_label('gamut_vis8_dist')
+    # gamut_label('gamut_visall_nodist')
+    # gamut_label('gamut_vis8_dist')
+    # gamut_label('gamut_vis16_dist')
+    # gamut_label('gamut_vis32_dist')
+    # gamut_label('gamut_other')
+
     #for i in [0,1,4,5,6,7]: # corr_peaks, decorr_time, histo_peaks_init, histo_peaks_patch, dirent_init, dirent_patch
     #for i in [10,14,18,22,26]: # avglen_mean, pkf_mean, pkt_mean, def_mean, det_mean
     #for i in [30,33,36]: # act_mean, len_mean, de_mean
@@ -5227,21 +6159,11 @@ if __name__ == '__main__':
     # for i in [1,36]:
     #     analyze_gamut('vis', i)
         # analyze_gamut('dist', i)
-    # analyze_gamut('vis',0)
-    # analyze_gamut('dist',0)
-
-    # gamut_table('gamut_visall_nodist')
-    # gamut_table('gamut_vis8_dist')
-    gamut_table('gamut_vis16_dist')
-    # gamut_table('gamut_vis32_dist')
-    # gamut_table('gamut_other')
-    # gamut_table('gamut_bound')
-    # gamut_table('gamut_pinball')
-
-    # gamut_label('gamut_visall_nodist')
-    # gamut_label('gamut_vis8_dist')
-    # gamut_label('gamut_vis32_dist')
-    # gamut_label('gamut_other')
+    # analyze_gamut('vis','fitness')
+    # analyze_gamut('dist','fitness')
+    # analyze_gamut('vis','basin_patch_dist')
+    # analyze_gamut('dist','basin_patch_dist')
+    # bpd_by_fit()
 
     # gamut_2d(1, 36, 'gamut', sc_type='group')
     # gamut_2d(1, 36, 'gamut', sc_type='label')
@@ -5261,16 +6183,35 @@ if __name__ == '__main__':
     # gamut_2d(1,14, 'gamut_vis8_dist', heatmap=True)
     # # gamut_2d(1,14, 'gamut_vis8_dist', cluster='kmeans')
     # # gamut_2d(1,14, 'gamut_vis8_dist', cluster='gmm')
+    # gamut_2d(1,14, 'gamut_vis16_dist', sc_type='group')
+    # gamut_2d(1,14, 'gamut_vis16_dist', sc_type='label')
+    # gamut_2d(1,14, 'gamut_vis16_dist', sc_type='fitness')
+    # gamut_2d(1,14, 'gamut_vis16_dist', heatmap=True)
+    # gamut_2d(1,14, 'gamut_vis16_dist', cluster='kmeans')
+    # gamut_2d(1,14, 'gamut_vis16_dist', cluster='gmm')
     # gamut_2d(1,14, 'gamut_vis32_dist', sc_type='group')
     # gamut_2d(1,14, 'gamut_vis32_dist', sc_type='label')
     # gamut_2d(1,14, 'gamut_vis32_dist', sc_type='fitness')
     # gamut_2d(1,14, 'gamut_vis32_dist', heatmap=True)
-    # # gamut_2d(1,14, 'gamut_vis32_dist', cluster='kmeans')
-    # # gamut_2d(1,14, 'gamut_vis32_dist', cluster='gmm')
+    # gamut_2d(1,14, 'gamut_vis32_dist', cluster='kmeans')
+    # gamut_2d(1,14, 'gamut_vis32_dist', cluster='gmm')
     # gamut_2d(1,14, 'all', sc_type='group')
     # gamut_2d(1,14, 'all', sc_type='label')
     # gamut_2d(1,14, 'all', sc_type='fitness')
     # gamut_2d(1,14, 'all', heatmap=True)
-    # gamut_2d(1,14, 'all', cluster='kmeans')
-    # gamut_2d(1,14, 'all', cluster='gmm')
+    # # gamut_2d(1,14, 'all', cluster='kmeans')
+    # # gamut_2d(1,14, 'all', cluster='gmm')
+    # gamut_2d(1,14, 'main_fig', sc_type='group')
+    # gamut_2d(1,14, 'main_fig', sc_type='label')
+    # gamut_2d(1,14, 'main_fig', sc_type='fitness')
+    # gamut_2d(1,14, 'main_fig', heatmap=True)
+    # gamut_2d(1,14, 'main_fig', cluster='kmeans')
+    # gamut_2d(1,14, 'main_fig', cluster='gmm')
 
+    # gamut_table('gamut_noise')
+    # gamut_2d(1,14, 'gamut_noise', sc_type='group')
+    # gamut_2d(1,14, 'gamut_noise', sc_type='fitness')
+
+    # gamut_table('gamut_pinball')
+    # gamut_2d(1,14, 'gamut_pinball', sc_type='group')
+    # gamut_2d(1,14, 'gamut_pinball', sc_type='fitness')
