@@ -5,6 +5,7 @@ import pickle
 import numpy as np
 import multiprocessing as mp
 import os
+import dotenv as de
 
 
 def rerun_NNs(name, num_NNs=20, num_seeds=100, noise_type=None, perturb_type=None):
@@ -17,6 +18,7 @@ def rerun_NNs(name, num_NNs=20, num_seeds=100, noise_type=None, perturb_type=Non
     data_dir = Path(__file__).parent.parent / r'data/simulation_data/'
     exp_path = fr'{data_dir}/{name}'
     env_path = fr'{exp_path}/.env'
+    envconf = de.dotenv_values(env_path)
 
     if Path(fr'{exp_path}/val_results_cen.txt').is_file():
         return print(f'val_results_cen already exists')
@@ -34,8 +36,12 @@ def rerun_NNs(name, num_NNs=20, num_seeds=100, noise_type=None, perturb_type=Non
     # top_fit = [top_data[i] for i in top_ind]
 
     # --> NNcen / dist center
-    top_ind = np.argsort(avg_data)[:num_NNs] # min : top
-    # top_ind = np.argsort(top_data)[-1:-num_NNs-1:-1] # max : top
+    if envconf['SIM_TYPE'] == 'walls':
+        top_ind = np.argsort(avg_data)[:num_NNs] # min : top
+    elif envconf['SIM_TYPE'] == 'nowalls':
+        top_ind = np.argsort(avg_data)[-1:-num_NNs-1:-1] # max : top
+    else:
+        raise ValueError('SIM_TYPE not recognized')
     top_fit = [avg_data[i] for i in top_ind]
 
     val_matrix = np.zeros((num_NNs,
@@ -61,15 +67,14 @@ def rerun_NNs(name, num_NNs=20, num_seeds=100, noise_type=None, perturb_type=Non
     results_list = results.get()
 
     # skip to start of each seed series/chunk + allocate fitness to save matrix
-    for i,c in enumerate(range(0, len(results_list), num_seeds)):
-        for s,(time_taken, dist_from_patch) in enumerate(results_list[c : c + num_seeds]):
-
-            val_matrix[i,s] = int(time_taken)
-
-            # if dist_from_patch == 0:
-            #     val_matrix[i,s] = int(time_taken)
-            # else:
-            #     val_matrix[i,s] = int(time_taken + dist_from_patch)
+    if envconf['SIM_TYPE'] == 'walls':
+        for i,c in enumerate(range(0, len(results_list), num_seeds)):
+            for s,(time_taken, dist_from_patch) in enumerate(results_list[c : c + num_seeds]):
+                val_matrix[i,s] = int(time_taken)
+    elif envconf['SIM_TYPE'] == 'nowalls':
+        for i,c in enumerate(range(0, len(results_list), num_seeds)):
+            for s,(time_taken, total_res_collected) in enumerate(results_list[c : c + num_seeds]):
+                val_matrix[i,s] = int(total_res_collected)
 
     # saving protocol for noise/perturb/regular
 
@@ -446,10 +451,24 @@ if __name__ == '__main__':
     #     names.append(name)
     # for name in [f'sc_CNN14_FNN2_p50e20_vis16_2xpinball_rep{x}' for x in range(20)]:
     #     names.append(name)
-    for name in [f'sc_CNN14_FNN2_p50e20_vis8_maxWF_2xpinball_rep{x}' for x in range(20)]:
+    # for name in [f'sc_CNN14_FNN2_p50e20_vis8_maxWF_2xpinball_rep{x}' for x in range(20)]:
+    #     names.append(name)
+    # for name in [f'sc_CNN17_FNN16_p50e20_vis16_2xpinball_rep{x}' for x in range(20)]:
+    #     names.append(name)
+
+    n = 5
+    for name in [f'nowall_N5_CNN14_FNN2_vis8_rep{x}' for x in range(n)]:
         names.append(name)
-    for name in [f'sc_CNN17_FNN16_p50e20_vis16_2xpinball_rep{x}' for x in range(20)]:
+    for name in [f'nowall_N5_CNN14_FNN2_vis16_rep{x}' for x in range(n)]:
         names.append(name)
+    for name in [f'nowall_N5_CNN14_FNN16_vis8_rep{x}' for x in range(n)]:
+        names.append(name)
+    # for name in [f'nowall_N10_CNN14_FNN2_vis8_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'nowall_N10_CNN14_FNN2_vis16_rep{x}' for x in range(n)]:
+    #     names.append(name)
+    # for name in [f'nowall_N10_CNN14_FNN16_vis8_rep{x}' for x in range(n)]:
+    #     names.append(name)
 
     for name in names:
         rerun_NNs(name)

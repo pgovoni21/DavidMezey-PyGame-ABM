@@ -992,7 +992,7 @@ def plot_mult_EA_param_violins(names, data='mean', save_name=None):
 
 # ------------------------------- EA trends ---------------------------------------- #
 
-def plot_mult_EA_trends(names, inter=False, val=None, group_est='mean', save_name=None):
+def plot_mult_EA_trends(names, inter=False, val=None, group_est=None, order='min', scoring='time', num_agents=1, save_name=None):
 
     # establish load directory
     root_dir = Path(__file__).parent.parent
@@ -1027,10 +1027,15 @@ def plot_mult_EA_trends(names, inter=False, val=None, group_est='mean', save_nam
         data_genxpop = np.mean(data, axis=2)
         if inter: data_genxpop = np.ma.masked_equal(data_genxpop, 0)
 
-        top_data = np.min(data_genxpop, axis=1) # min : top
-        # top_data = np.max(data_genxpop, axis=1) # max : top
-        top_ind = np.argsort(top_data)[:3] # min : top
-        # top_ind = np.argsort(top_data)[-1:-4:-1] # max : top
+        # score per agent
+        data_genxpop /= num_agents
+
+        if order == 'min':
+            top_data = np.min(data_genxpop, axis=1) # min : top
+            top_ind = np.argsort(top_data)[:3] # min : top
+        elif order == 'max':
+            top_data = np.max(data_genxpop, axis=1) # max : top
+            top_ind = np.argsort(top_data)[-1:-4:-1] # max : top
         top_fit = [top_data[i] for i in top_ind]
         for g,f in zip(top_ind, top_fit):
             print(f'trn | gen {int(g)}: fit {int(f)}')
@@ -1071,10 +1076,15 @@ def plot_mult_EA_trends(names, inter=False, val=None, group_est='mean', save_nam
                         val_data[n,1] = data[4] # train fitness
                         val_data[n,2] = data[7] # val fitness
 
-                    print(i, val_data[:,2])
+                    # print(i, val_data[:,2])
 
-                    top_ind = np.argsort(val_data[:,2])[:3] # min : top
-                    # top_ind = np.argsort(top_data, axis=2)[-1:-4:-1] # max : top
+                    # score per agent
+                    val_data[:,1:] /= num_agents
+
+                    if order == 'min':
+                        top_ind = np.argsort(val_data[:,2])[:3] # min : top
+                    elif order == 'max':
+                        top_ind = np.argsort(val_data[:,2])[-1:-4:-1] # max : top
 
                     top_gen = [val_data[i,0] for i in top_ind]
                     top_valfit = [val_data[i,2] for i in top_ind]
@@ -1106,14 +1116,20 @@ def plot_mult_EA_trends(names, inter=False, val=None, group_est='mean', save_nam
     group_top = np.array(group_top)
     if group_est == 'mean':
         est_trend = np.mean(group_top, axis=0)
+        lt = ax1.plot(est_trend, 
+                        label = f'{group_est} of group top',
+                        color='k', 
+                        alpha=.5
+                        )
+        lns.append(lt[0])
     elif group_est == 'median':
         est_trend = np.median(group_top, axis=0)
-    lt = ax1.plot(est_trend, 
-                    label = f'{group_est} of group top',
-                    color='k', 
-                    alpha=.5
-                    )
-    lns.append(lt[0])
+        lt = ax1.plot(est_trend, 
+                        label = f'{group_est} of group top',
+                        color='k', 
+                        alpha=.5
+                        )
+        lns.append(lt[0])
     
     # group_avg = np.array(group_avg)
     # if group_est == 'mean':
@@ -1130,15 +1146,17 @@ def plot_mult_EA_trends(names, inter=False, val=None, group_est='mean', save_nam
 
     ax1.set_xlabel('Generation')
 
-    # labs = [l.get_label() for l in lns]
-    # ax1.legend(lns, labs, loc='upper right')
+    labs = [l.get_label() for l in lns]
+    ax1.legend(lns, labs, loc='upper right')
     # ax1.legend(lns, labs, loc='lower left')
     # ax1.legend(lns, labs, loc='upper left')
 
-    ax1.set_ylabel('Time to Find Patch')
-    # ax1.set_ylim(-20,1720)
-    ax1.set_ylim(-20,1520)
-    # ax1.set_ylim(1900,5000)
+    if scoring == 'time':
+        ax1.set_ylabel('Time to Find Patch')
+    elif scoring == 'res':
+        ax1.set_ylabel('Resources Collected per Agent')
+    # ax1.set_ylim(-20,1520)
+    ax1.set_ylim(-20,530)
 
     # ax1.set_ylabel('# Patches Found')
     # ax1.set_ylim(0,8)
@@ -1149,11 +1167,15 @@ def plot_mult_EA_trends(names, inter=False, val=None, group_est='mean', save_nam
         top_gens = top_vals_overall[1,:][top_val_inds]
         top_vals = top_vals_overall[2,:][top_val_inds]
         
-        ax1.set_title(f'overall validated run avg: {int(np.mean(val_avgs))} | val var: {int((np.mean(val_diffs))**.5)} | top val run: {int(top_vals[0])}')
+        # ax1.set_title(f'overall validated run avg: {int(np.mean(val_avgs))} | val var: {int((np.mean(val_diffs))**.5)} | top val run: {int(top_vals[0])}')
 
         top_num = 20
-        for rep, gen, val_fit in zip(top_reps[:top_num], top_gens[:top_num], top_vals[:top_num]):
-            print(f'overall val | rep {int(rep)} | gen {int(gen)} | fit {int(val_fit)}')
+        if order == 'min':
+            for rep, gen, val_fit in zip(top_reps[:top_num], top_gens[:top_num], top_vals[:top_num]):
+                print(f'overall val | rep {int(rep)} | gen {int(gen)} | fit {int(val_fit)}')
+        elif order == 'max':
+            for rep, gen, val_fit in zip(top_reps[-1:-top_num-1:-1], top_gens[-1:-top_num-1:-1], top_vals[-1:-top_num-1:-1]):
+                print(f'overall val | rep {int(rep)} | gen {int(gen)} | fit {int(val_fit)}')
 
     if save_name: 
         plt.savefig(fr'{data_dir}/{save_name}.png')
@@ -2426,17 +2448,35 @@ if __name__ == '__main__':
     # plot_mult_EA_trends([f'sc_CNN14_FNN2_p50e20_vis8_maxWF_2xpinball_rep{x}' for x in range(20)], save_name='sc_CNN14_FNN2_p50e20_vis8_maxWF_2xpinball')
     # plot_mult_EA_trends([f'sc_CNN17_FNN16_p50e20_vis16_2xpinball_rep{x}' for x in range(20)], save_name='sc_CNN17_FNN16_p50e20_vis16_2xpinball')
 
-    groups = []
-    groups.append(('no walls, vis8', [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep{x}' for x in range(20)]))
-    groups.append(('no walls, vis16', [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_rep{x}' for x in range(20)]))
-    groups.append(('vis8', [f'sc_CNN14_FNN2_p50e20_vis8_2xpinball_rep{x}' for x in range(20)]))
-    groups.append(('vis16', [f'sc_CNN14_FNN2_p50e20_vis16_2xpinball_rep{x}' for x in range(17)]))
-    groups.append(('maxWF', [f'sc_CNN14_FNN2_p50e20_vis8_maxWF_2xpinball_rep{x}' for x in range(20)]))
-    groups.append(('vis16, CNN17, FNN16', [f'sc_CNN17_FNN16_p50e20_vis16_2xpinball_rep{x}' for x in range(20)]))
-    plot_mult_EA_trends_groups(groups, val='cen', save_name='groups_singlecorner_2xpinball')
-    plot_mult_EA_trends_groups_endonly(groups, val='cen', save_name='groups_endonly_singlecorner_2xpinball')
+    # groups = []
+    # groups.append(('no walls, vis8', [f'sc_CNN14_FNN2_p50e20_vis8_PGPE_ss20_mom8_rep{x}' for x in range(20)]))
+    # groups.append(('no walls, vis16', [f'sc_CNN14_FNN2_p50e20_vis16_PGPE_ss20_mom8_rep{x}' for x in range(20)]))
+    # groups.append(('vis8', [f'sc_CNN14_FNN2_p50e20_vis8_2xpinball_rep{x}' for x in range(20)]))
+    # groups.append(('vis16', [f'sc_CNN14_FNN2_p50e20_vis16_2xpinball_rep{x}' for x in range(17)]))
+    # groups.append(('maxWF', [f'sc_CNN14_FNN2_p50e20_vis8_maxWF_2xpinball_rep{x}' for x in range(20)]))
+    # groups.append(('vis16, CNN17, FNN16', [f'sc_CNN17_FNN16_p50e20_vis16_2xpinball_rep{x}' for x in range(20)]))
+    # plot_mult_EA_trends_groups(groups, val='cen', save_name='groups_singlecorner_2xpinball')
+    # plot_mult_EA_trends_groups_endonly(groups, val='cen', save_name='groups_endonly_singlecorner_2xpinball')
 
+    n = 3
+    names = []
+    for name in [f'nowall_N5_CNN14_FNN2_vis8_rep{x}' for x in range(n)]:
+        names.append(name)
+    for name in [f'nowall_N5_CNN14_FNN2_vis16_rep{x}' for x in range(n)]:
+        names.append(name)
+    for name in [f'nowall_N5_CNN14_FNN16_vis8_rep{x}' for x in range(n)]:
+        names.append(name)
+    plot_mult_EA_trends(names, val='cen', order='max', scoring='res', num_agents=5, save_name='nowalls_N5')
 
+    n = 2
+    names = []
+    for name in [f'nowall_N10_CNN14_FNN2_vis8_rep{x}' for x in range(n)]:
+        names.append(name)
+    for name in [f'nowall_N10_CNN14_FNN2_vis16_rep{x}' for x in range(n)]:
+        names.append(name)
+    for name in [f'nowall_N10_CNN14_FNN16_vis8_rep{x}' for x in range(n)]:
+        names.append(name)
+    plot_mult_EA_trends(names, val='cen', order='max', scoring='res', num_agents=10, save_name='nowalls_N10')
 
 
 ### ----------group pop runs----------- ###

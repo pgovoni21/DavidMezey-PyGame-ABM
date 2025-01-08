@@ -154,7 +154,7 @@ class Simulation:
     def draw_status(self):
         """Showing framerate, sim time and pause status on simulation windows"""
         status = [
-            f"t = {self.t}/{self.T}     |   Input FPS: {self.framerate}   |  Actual FPS: {round(self.clock.get_fps(),2)}",
+            f"t = {self.t}/{self.T}     |   Input FPS: {self.framerate}   |  Actual FPS: {round(self.clock.get_fps(),2)}    |   Res Collected:  {np.sum(self.data_agent[:,self.t-1,3])}",
         ]
         if self.is_paused:
             status.append("-Paused-")
@@ -169,10 +169,11 @@ class Simulation:
             status = [ 
                 # f'ID: {agent.id}',
                 # f'res: {agent.collected_r}',
-                f'ori: {int(agent.orientation*180/np.pi)} deg',
-                f'NNout: {agent.action:.2f}',
-                f'turn: {agent.action*180/np.pi:.2f} deg',
-                f'vel: {agent.velocity:.2f} / {self.max_vel}',
+                # f'ori: {int(agent.orientation*180/np.pi)} deg',
+                # f'NNout: {agent.action:.2f}',
+                # f'turn: {agent.action*180/np.pi:.2f} deg',
+                # f'vel: {agent.velocity:.2f} / {self.max_vel}',
+                f'res_coll: {self.data_agent[agent.id,self.t-1,3]}',
             ]
             for i, stat_i in enumerate(status):
                 text = font.render(stat_i, True, colors.BLACK)
@@ -457,6 +458,7 @@ class Simulation:
                         color=colors.BLUE,
                         vis_transform=self.vis_transform,
                         percep_angle_noise_std=self.percep_angle_noise_std,
+                        sim_type=self.sim_type,
                     )
                 
                 colliding_resources = pygame.sprite.spritecollide(agent, self.resources, False, pygame.sprite.collide_circle)
@@ -530,6 +532,7 @@ class Simulation:
                             color=colors.BLUE,
                             vis_transform=self.vis_transform,
                             percep_angle_noise_std=self.percep_angle_noise_std,
+                            sim_type=self.sim_type,
                         )
                     
                     colliding_resources = pygame.sprite.spritecollide(agent, self.resources, False, pygame.sprite.collide_circle)
@@ -767,6 +770,7 @@ class Simulation:
     #             # print(f'agent {agent.rect.center} collided with {landmark.id} @ {mid_pos}')
     #             agent.collided_points.append(np.array(mid_pos) - self.window_pad)
 
+    # @timer
     def collide_agent_agent(self):
 
         # Create dict of every agent that has collided : [colliding agents]
@@ -1003,7 +1007,7 @@ class Simulation:
 
             ### ---- BACKGROUND PROCESSES ---- ###
 
-                # print(f'collected res: {np.sum(self.data_agent[:,self.t,3])}')
+                # print(f'collected res: {self.data_agent[:,self.t,3]}')
         
                 # Step sim time forward
                 self.t += 1

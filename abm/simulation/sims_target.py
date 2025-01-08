@@ -509,6 +509,7 @@ class Simulation:
                         color=colors.BLUE,
                         vis_transform=self.vis_transform,
                         percep_angle_noise_std=self.percep_angle_noise_std,
+                        sim_type=self.sim_type
                     )
                 
                 colliding_resources = pygame.sprite.spritecollide(agent, self.resources, False, pygame.sprite.collide_circle)
@@ -582,6 +583,7 @@ class Simulation:
                             color=colors.BLUE,
                             vis_transform=self.vis_transform,
                             percep_angle_noise_std=self.percep_angle_noise_std,
+                            sim_type=self.sim_type
                         )
                     
                     colliding_resources = pygame.sprite.spritecollide(agent, self.resources, False, pygame.sprite.collide_circle)

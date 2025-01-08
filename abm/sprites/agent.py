@@ -19,7 +19,7 @@ class Agent(pygame.sprite.Sprite):
     def __init__(self, id, position, orientation, max_vel, 
                  FOV, vision_range, num_class_elements, vis_field_res, consumption,
                  model, boundary_endpts, window_pad, radius, color, 
-                 vis_transform, percep_angle_noise_std
+                 vis_transform, percep_angle_noise_std, sim_type
                  ):
         """
         Initalization method of main agent class of the simulations
@@ -98,6 +98,7 @@ class Agent(pygame.sprite.Sprite):
             ('BR', BR)
         ]
         self.extra_coll_block = 0 * np.pi / 180 # extra collision degrees where agent vel = 0 (since clip collision is slow 1 timestep)
+        self.sim_type = sim_type
 
         # Visualization / human interaction parameters
         self.radius = radius
@@ -114,6 +115,7 @@ class Agent(pygame.sprite.Sprite):
 
 ### -------------------------- VISUAL FUNCTIONS -------------------------- ###
 
+    # @timer
     def gather_self_percep_info(self):
         """
         update position/direction points + vector of self
@@ -244,32 +246,29 @@ class Agent(pygame.sprite.Sprite):
             # exclude self from list
             if ag.id != self.id:
 
-                # exclude agents outside range of vision (calculate distance bw agent center + self eye)
+                # orientation angle relative to perceiving agent, in radians between [-pi (left/CCW), +pi (right/CW)]
                 agent_coord = ag.position
                 vec_between = agent_coord - self.pt_eye
                 agent_distance = np.linalg.norm(vec_between)
-                if agent_distance <= self.vision_range:
+                angle_bw = supcalc.angle_bw_vis(self.vec_self_dir, vec_between, self.radius, agent_distance)
+                # exclusionary angle between agent + self, taken to L/R boundaries
+                angle_edge = np.arctan(self.radius / agent_distance)
+                angle_L = angle_bw - angle_edge
+                angle_R = angle_bw + angle_edge
+                # unpack L/R angle limits of visual projection field
+                phi_L_limit = self.phis[0]
+                phi_R_limit = self.phis[-1]
 
-                    # exclude agents outside FOV limits (calculate visual boundaries of agent)
+                # exclude agents outside FOV limits (calculate visual boundaries of agent)
+                if (phi_L_limit <= angle_L <= phi_R_limit) or (phi_L_limit <= angle_R <= phi_R_limit): 
 
-                    # orientation angle relative to perceiving agent, in radians between [-pi (left/CCW), +pi (right/CW)]
-                    angle_bw = supcalc.angle_bw_vis(self.vec_self_dir, vec_between, self.radius, agent_distance)
-                    # exclusionary angle between agent + self, taken to L/R boundaries
-                    angle_edge = np.arctan(self.radius / agent_distance)
-                    angle_L = angle_bw - angle_edge
-                    angle_R = angle_bw + angle_edge
-                    # unpack L/R angle limits of visual projection field
-                    phi_L_limit = self.phis[0]
-                    phi_R_limit = self.phis[-1]
-                    if (phi_L_limit <= angle_L <= phi_R_limit) or (phi_L_limit <= angle_R <= phi_R_limit): 
-
-                        # update dictionary with all relevant info
-                        agent_name = f'agent_{ag.id}'
-                        self.vis_field_agent_dict[agent_name] = {}
-                        self.vis_field_agent_dict[agent_name]['mode'] = ag.mode
-                        self.vis_field_agent_dict[agent_name]['distance'] = agent_distance
-                        self.vis_field_agent_dict[agent_name]['angle_L'] = angle_L
-                        self.vis_field_agent_dict[agent_name]['angle_R'] = angle_R
+                    # update dictionary with all relevant info
+                    agent_name = f'agent_{ag.id}'
+                    self.vis_field_agent_dict[agent_name] = {}
+                    self.vis_field_agent_dict[agent_name]['mode'] = ag.mode
+                    self.vis_field_agent_dict[agent_name]['distance'] = agent_distance
+                    self.vis_field_agent_dict[agent_name]['angle_L'] = angle_L
+                    self.vis_field_agent_dict[agent_name]['angle_R'] = angle_R
 
     # @timer
     def fill_vis_field_walls(self):
@@ -381,15 +380,19 @@ class Agent(pygame.sprite.Sprite):
 
         # Gather relevant info for self / boundary endpoints / walls
         self.gather_self_percep_info()
-        self.gather_boundary_endpt_info()
-        self.gather_boundary_wall_info()
-        self.gather_obj_info(objs)
-        if len(agents) > 1: self.gather_agent_info(agents)
+        if self.sim_type != 'nowalls':
+            self.gather_boundary_endpt_info()
+            self.gather_boundary_wall_info()
+            self.gather_obj_info(objs)
+        if len(agents) > 1: 
+            self.gather_agent_info(agents)
 
         # Fill in vis_field with id info (wall name / agent mode) for each visual perception ray
-        self.fill_vis_field_walls()
-        self.fill_vis_field_objs()
-        if len(agents) > 1: self.fill_vis_field_agents()
+        if self.sim_type != 'nowalls':
+            self.fill_vis_field_walls()
+            self.fill_vis_field_objs()
+        if len(agents) > 1: 
+            self.fill_vis_field_agents()
 
         # Reset orientation
         self.orientation = orientation_real
@@ -466,6 +469,7 @@ class Agent(pygame.sprite.Sprite):
 
 ### -------------------------- NEURAL NETWORK FUNCTIONS -------------------------- ###
 
+    # @timer
     def encode_one_hot(self, field):
         """
         one hot encode the visual field according to class indices:

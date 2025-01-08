@@ -16,6 +16,7 @@ def start_EA(): # "EA-start" in terminal
     N                    = int(envconf["N"])
 
     if N == 1:  num_class_elements = 4 # single-agent --> perception of 4 walls
+    elif envconf["SIM_TYPE"] == 'nowalls': num_class_elements = 2 # multi-agent --> 2 agent modes
     else:       num_class_elements = 6 # multi-agent --> perception of 4 walls + 2 agent modes
     
     vis_field_res        = int(envconf["VISUAL_FIELD_RESOLUTION"])
