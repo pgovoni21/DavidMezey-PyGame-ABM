@@ -10,8 +10,6 @@ from abm import colors
 from abm.sprites import supcalc
 from abm.sprites.agent import Agent
 from abm.sprites.resource import Resource
-# from abm.sprites.wall import Wall
-# from abm.sprites.landmark import Landmark
 from abm.monitoring import tracking, plot_funcs
 # from abm.monitoring.screen_recorder import ScreenRecorder
 # from abm.helpers import timer
@@ -46,7 +44,7 @@ class Simulation:
         self.boundary_endpts_wp = [endpt + self.window_pad for endpt in self.boundary_endpts]
 
         # Simulation parameters
-        self.N = N
+        self.N = N+1
         self.T = T
         self.t = 0
         self.with_visualization = with_visualization
@@ -110,8 +108,6 @@ class Simulation:
         # Neural Network parameters
         self.model = NN
 
-        # if N == 1:  self.num_class_elements = 4 # single-agent --> perception of 4 walls
-        # else:       self.num_class_elements = 6 # multi-agent --> perception of 4 walls + 2 agent modes
         self.num_class_elements = 2 # multi-agent --> perception of 2 agent modes
 
         self.other_input = other_input
@@ -133,9 +129,9 @@ class Simulation:
             pygame.display.set_mode([1,1])
 
         # pygame related class attributes
-        # self.walls = pygame.sprite.Group()
-        # self.objs = pygame.sprite.Group()
         self.agents = pygame.sprite.Group()
+        self.ghost = pygame.sprite.Group()
+        self.viewable_agents = pygame.sprite.Group()
         self.resources = pygame.sprite.Group()
         self.clock = pygame.time.Clock() # todo: look into this more in detail so we can control dt
 
@@ -313,7 +309,7 @@ class Simulation:
         # pygame.draw.circle(self.screen, colors.BLACK, (700,425), 5)
         # self.walls.draw(self.screen)
         self.resources.draw(self.screen)
-        self.agents.draw(self.screen)
+        self.viewable_agents.draw(self.screen)
         # self.draw_walls()
         # self.draw_objs()
         self.draw_status()
@@ -334,9 +330,10 @@ class Simulation:
         Randomly initializes orientation (0 : right, pi/2 : up)
         Adds agent class to PyGame sprite group class (faster operations than lists)
         """
-        x_min, x_max, y_min, y_max = self.boundary_info_coll
+        x_min, x_max, y_min, y_max = self.boundary_info_coll              
 
-        if self.N == 1:
+        if self.N == 2:
+            i = 0
             colliding_resources = [0]
             retries = 0 
             while len(colliding_resources) > 0:
@@ -376,7 +373,7 @@ class Simulation:
                 
 
                 agent = Agent(
-                        id=0,
+                        id=i,
                         position=(x, y),
                         orientation=orient,
                         max_vel=self.max_vel,
@@ -400,6 +397,7 @@ class Simulation:
                 retries += 1
                 if retries > 10: print(f'Retries > 10')
             self.agents.add(agent)
+            self.viewable_agents.add(agent)
 
         else: # N > 1
 
@@ -429,7 +427,7 @@ class Simulation:
             #     (800,100,3),
             # ])
 
-            for i in range(self.N):
+            for i in range(self.N-1):
 
                 colliding_resources = [0]
                 colliding_agents = [0]
@@ -475,8 +473,32 @@ class Simulation:
                     retries += 1
                     if retries > 10: print(f'Retries > 10')
                 self.agents.add(agent)
-    
-        # self.respawn_counter += 1
+                self.viewable_agents.add(agent)
+
+        # spawn ghost on patch
+        x,y = self.res_pos
+        orient = 0
+        agent = Agent(
+                id=i+1,
+                position=(x, y),
+                orientation=0,
+                max_vel=self.max_vel,
+                FOV=self.agent_fov,
+                vision_range=self.vision_range,
+                num_class_elements=self.num_class_elements,
+                vis_field_res=self.vis_field_res,
+                consumption=self.agent_consumption,
+                model=self.model,
+                boundary_endpts=self.boundary_endpts,
+                window_pad=self.window_pad,
+                radius=self.agent_radii,
+                color=colors.BLUE,
+                vis_transform=self.vis_transform,
+                percep_angle_noise_std=self.percep_angle_noise_std,
+                sim_type=self.sim_type,
+            )
+        self.ghost.add(agent)
+        self.viewable_agents.add(agent)
 
     # @timer
     def save_data_agent(self):
@@ -553,6 +575,17 @@ class Simulation:
                     agent.on_res_last_step = 1
                     agent.res_to_be_consumed = resource
                     break
+
+        if 'exploiter' in self.sim_type:
+            collision_group_ar_ghost = pygame.sprite.groupcollide(self.ghost, self.resources, False, False, pygame.sprite.collide_circle)
+            for agent, resource_list in collision_group_ar_ghost.items():
+                for resource in resource_list:
+                    if supcalc.distance(agent.position, resource.position) <= resource.radius:
+                        agent.mode = 'exploit'
+                        agent.on_res = 1
+                        agent.on_res_last_step = 1
+                        agent.res_to_be_consumed = resource
+                        break
 
     # @timer
     def collide_agent_agent(self):
@@ -650,7 +683,7 @@ class Simulation:
 
                 # Update visual projections
                 for agent in self.agents:
-                    agent.visual_sensing([], self.agents)
+                    agent.visual_sensing([], self.viewable_agents)
 
                 # obs_times[self.t] = time.time() - obs_start
 
@@ -658,6 +691,8 @@ class Simulation:
 
                 if self.with_visualization:
                     for agent in self.agents:
+                        agent.draw_update() 
+                    for agent in self.ghost:
                         agent.draw_update() 
                     for res in self.resources:
                         res.draw_update() 

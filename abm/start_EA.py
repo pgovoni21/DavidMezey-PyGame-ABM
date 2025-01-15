@@ -16,7 +16,7 @@ def start_EA(): # "EA-start" in terminal
     N                    = int(envconf["N"])
 
     if N == 1:  num_class_elements = 4 # single-agent --> perception of 4 walls
-    elif envconf["SIM_TYPE"] == 'nowalls': num_class_elements = 2 # multi-agent --> 2 agent modes
+    elif envconf["SIM_TYPE"].startswith('nowalls'): num_class_elements = 2 # multi-agent --> 2 agent modes
     else:       num_class_elements = 6 # multi-agent --> perception of 4 walls + 2 agent modes
     
     vis_field_res        = int(envconf["VISUAL_FIELD_RESOLUTION"])
@@ -26,6 +26,7 @@ def start_EA(): # "EA-start" in terminal
     RNN_other_input_size = int(envconf["RNN_OTHER_INPUT_SIZE"])
     RNN_hidden_size      = int(envconf["RNN_HIDDEN_SIZE"])
     LCL_output_size      = int(envconf["LCL_OUTPUT_SIZE"])
+    misc_weight          = float(envconf["MISC_WEIGHT"])
 
     architecture = (
         CNN_input_size, 
@@ -34,6 +35,7 @@ def start_EA(): # "EA-start" in terminal
         RNN_other_input_size, 
         RNN_hidden_size, 
         LCL_output_size,
+        misc_weight
         )
 
     EA = EvolAlgo(arch                      =architecture, 

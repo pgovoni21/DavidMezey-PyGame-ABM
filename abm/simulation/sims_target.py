@@ -849,13 +849,6 @@ class Simulation:
             if event.type == pygame.QUIT:
                 sys.exit()
 
-            # # Change orientation with mouse wheel
-            # if event.type == pygame.MOUSEWHEEL:
-            #     if event.y == -1:
-            #         event.y = 0
-            #     for ag in self.agents:
-            #         ag.move_with_mouse(pygame.mouse.get_pos(), event.y, 1 - event.y)
-
             # Pause on Space
             if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
                 self.is_paused = not self.is_paused
@@ -871,24 +864,6 @@ class Simulation:
                     self.framerate = 100
             if event.type == pygame.KEYDOWN and event.key == pygame.K_d:
                 self.framerate = self.framerate_orig
-
-            # # Continuous mouse events (move with cursor)
-            # if pygame.mouse.get_pressed()[0]:
-            #     try:
-            #         for ag in self.agents:
-            #             ag.move_with_mouse(event.pos, 0, 0)
-            #         for res in self.resources:
-            #             res.update_clicked_status(event.pos)
-            #     except AttributeError:
-            #         for ag in self.agents:
-            #             ag.move_with_mouse(pygame.mouse.get_pos(), 0, 0)
-            # else:
-            #     for ag in self.agents:
-            #         ag.is_moved_with_cursor = False
-            #         ag.draw_update()
-            #     for res in self.resources:
-            #         res.is_clicked = False
-            #         res.draw_update()
 
 
 ##################################################################################

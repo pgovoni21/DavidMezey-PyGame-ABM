@@ -380,7 +380,7 @@ class Agent(pygame.sprite.Sprite):
 
         # Gather relevant info for self / boundary endpoints / walls
         self.gather_self_percep_info()
-        if self.sim_type != 'nowalls':
+        if not self.sim_type.startswith('nowalls'):
             self.gather_boundary_endpt_info()
             self.gather_boundary_wall_info()
             self.gather_obj_info(objs)
@@ -388,7 +388,7 @@ class Agent(pygame.sprite.Sprite):
             self.gather_agent_info(agents)
 
         # Fill in vis_field with id info (wall name / agent mode) for each visual perception ray
-        if self.sim_type != 'nowalls':
+        if not self.sim_type.startswith('nowalls'):
             self.fill_vis_field_walls()
             self.fill_vis_field_objs()
         if len(agents) > 1: 

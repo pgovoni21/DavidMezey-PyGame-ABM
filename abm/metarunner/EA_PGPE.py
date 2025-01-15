@@ -63,10 +63,10 @@ class EvolAlgo():
         self.root_dir = Path(__file__).parent.parent.parent
         self.EA_save_dir = Path(self.root_dir, 'abm/data/simulation_data', EA_save_name)
         
-        self.mean_param_vec = np.zeros([generations, param_vec_size])
-        self.std_param_vec = np.zeros([generations, param_vec_size])
-        self.mean_param_vec[0,:] = self.es.center
-        self.std_param_vec[0,:] = self.es.stdev
+        # self.mean_param_vec = np.zeros([generations, param_vec_size])
+        # self.std_param_vec = np.zeros([generations, param_vec_size])
+        # self.mean_param_vec[0,:] = self.es.center
+        # self.std_param_vec[0,:] = self.es.stdev
 
         # Create save directory + copy .env file over
         if os.path.isdir(self.EA_save_dir):
@@ -115,7 +115,7 @@ class EvolAlgo():
             #### ---- Find fitness averages across episodes ---- ####
 
             # pull sim data, skipping to start of each episode series/chunk
-            if self.sim_type == 'walls':
+            if self.sim_type.startswith('walls'):
                 for p, NN_index in enumerate(range(0, len(results_list), self.episodes)):
                     for e, (time_taken, dist_from_patch) in enumerate(results_list[NN_index : NN_index + self.episodes]):
 
@@ -127,7 +127,7 @@ class EvolAlgo():
                             # self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch + 200)
                             # self.fitness_evol[i,p,e] = int(time_taken + dist_from_patch/2 + 200)
 
-            elif self.sim_type == 'nowalls':
+            elif self.sim_type.startswith('nowalls'):
                 for p, NN_index in enumerate(range(0, len(results_list), self.episodes)):
                     for e, (time_taken, total_res_collected) in enumerate(results_list[NN_index : NN_index + self.episodes]):
                         self.fitness_evol[i,p,e] = int(total_res_collected)
@@ -140,9 +140,9 @@ class EvolAlgo():
             # print(f'Fitnesses: {fitness_rank}')
 
             # Pass parameters + resulting fitness list to *maximizing* optimizer class
-            if self.sim_type == 'walls':
+            if self.sim_type.startswith('walls'):
                 fitness_rank = [-f for f in fitness_rank] # flips sign (only applicable if min : top)
-            elif self.sim_type == 'nowalls':
+            elif self.sim_type.startswith('nowalls'):
                 pass # no sign flip needed
             self.es.tell(fitness_rank)
 
@@ -152,29 +152,28 @@ class EvolAlgo():
 
             #### ---- Save current ES/model params + print info ---- ####
 
-            # cycle through the top X performers
-            # top_indices = np.argsort(fitness_rank)[ : -1-self.num_top_nn_saved : -1] # max : top
-            # top_indices = np.argsort(fitness_rank)[ : self.num_top_nn_saved] # min : top
-            # top_indices = np.argsort(fitness_rank)[-1] # max : top
-            top_indices = np.argsort(fitness_rank)[:1] # min : top
+            # # cycle through the top X performers
+            # # top_indices = np.argsort(fitness_rank)[ : -1-self.num_top_nn_saved : -1] # max : top
+            # # top_indices = np.argsort(fitness_rank)[ : self.num_top_nn_saved] # min : top
+            # # top_indices = np.argsort(fitness_rank)[-1] # max : top
+            # top_indices = np.argsort(fitness_rank)[:1] # min : top
 
-            # save top sim params
-            for n_top, n_gen in enumerate(top_indices):
-                with open(fr'{self.EA_save_dir}/gen{i}_NN{n_top}_pickle.bin','wb') as f:
-                    pickle.dump(self.NN_param_vectors[n_gen], f)
+            # # save top sim params
+            # for n_top, n_gen in enumerate(top_indices):
+            #     with open(fr'{self.EA_save_dir}/gen{i}_NN{n_top}_pickle.bin','wb') as f:
+            #         pickle.dump(self.NN_param_vectors[n_gen], f)
             
             # save center sim params
             with open(fr'{self.EA_save_dir}/gen{i}_NNcen_pickle.bin', 'wb') as f:
                 pickle.dump(self.es.center.copy(), f)
 
-            # Save param_vec distribution
-            self.mean_param_vec[i,:] = self.es.center
-            self.std_param_vec[i,:] = self.es.stdev
+            # # Save param_vec distribution
+            # self.mean_param_vec[i,:] = self.es.center
+            # self.std_param_vec[i,:] = self.es.stdev
 
             # print run info
             gen_time = round(time.time() - gen_time,2)
-            # top_fg = int(np.min(fitness_rank)) # max : top
-            top_fg = int(np.max(fitness_rank)) # min : top
+            top_fg = int(np.max(fitness_rank))
             avg_fg = int(np.mean(fitness_rank))
             med_fg = int(np.median(fitness_rank))
             print(f'--- gen {i} | t: {gen_time}s | top: {top_fg} | avg: {avg_fg} | med: {med_fg} ---')
@@ -187,14 +186,14 @@ class EvolAlgo():
         end_overall_time = round(time.time() - self.overall_time, 2)
         print(f'overall time: {end_overall_time} s')
 
-        # save run data
-        run_data = (
-            self.mean_param_vec,
-            self.std_param_vec,
-            end_overall_time
-        )
-        with open(fr'{self.EA_save_dir}/run_data.bin', 'wb') as f:
-            pickle.dump(run_data, f)
+        # # save run data
+        # run_data = (
+        #     self.mean_param_vec,
+        #     self.std_param_vec,
+        #     end_overall_time
+        # )
+        # with open(fr'{self.EA_save_dir}/run_data.bin', 'wb') as f:
+        #     pickle.dump(run_data, f)
 
         # # plot violin plot for the EA trend
         # plot_funcs.plot_EA_trend_violin(self.fitness_evol, self.est_method, self.EA_save_dir)
